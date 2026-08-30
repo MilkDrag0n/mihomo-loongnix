@@ -54,6 +54,7 @@ ARCH=$(uname -m)
 case "$ARCH" in
     x86_64)           ARCH="amd64" ;;
     aarch64|arm64)    ARCH="arm64" ;;
+    loongarch64|loong64) ARCH="loong64" ;;
     armv7l)           ARCH="armv7" ;;
     i386|i686)        ARCH="386"   ;;
     *)                ARCH="${ARCH}" ;;

@@ -22,6 +22,8 @@ jobs:
             goarm: 7
           - arch: 386
             goarch: 386
+          - arch: loong64
+            goarch: loong64
 
     steps:
       - name: Checkout

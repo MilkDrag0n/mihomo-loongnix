@@ -381,6 +381,12 @@ func LoadConfig() Config {
 			cfg.Subscriptions[i].ID = newSubscriptionID()
 		}
 	}
+	// 私密值只在内存中与主配置合并。旧版将这些值内联在 config.yaml；
+	// 记录迁移标志，完成默认值兼容处理后自动拆分并覆盖旧文件。
+	legacyInlineSecrets := configContainsInlineSecrets(&cfg)
+	if err := loadRuntimeSecrets(&cfg); err != nil {
+		Warnf("加载独立私密配置失败: %v", err)
+	}
 	// 迁移历史配置：所有现有订阅进入默认主备池，保持原列表优先级。
 	if len(cfg.Subscriptions) > 0 && len(cfg.SubscriptionPools) == 0 {
 		members := make([]string, 0, len(cfg.Subscriptions))
@@ -436,6 +442,13 @@ func LoadConfig() Config {
 	if cfg.DefaultProxyGroup == "" {
 		cfg.DefaultProxyGroup = "Auto"
 	}
+	if legacyInlineSecrets {
+		if err := cfg.Flush(); err != nil {
+			Warnf("迁移内联敏感信息失败，旧主配置尚未完成拆分: %v", err)
+		} else {
+			Infof("已将主配置中的敏感信息迁移到独立私密目录")
+		}
+	}
 
 	Infof("配置加载完成: dir=%s subs=%d active=%d mode=%s default_group=%s", GetConfigDir(), len(cfg.Subscriptions), cfg.ActiveSubscription, cfg.ProxyMode, cfg.DefaultProxyGroup)
 	return cfg
@@ -444,8 +457,13 @@ func LoadConfig() Config {
 // Flush 将配置原子写入文件
 func (c *Config) Flush() error {
 	path := configFilePath()
+	// 先持久化私密值，再写只含引用的主配置。即使主配置被误复制到仓库，
+	// 也不会包含 API secret、订阅地址或规则订阅地址。
+	if err := writeRuntimeSecrets(c); err != nil {
+		return err
+	}
 	// 如果 LogDir 是默认路径，不持久化到 yaml，让不同用户加载时动态计算
-	cfg := *c
+	cfg := publicConfigForDisk(c)
 	if cfg.LogDir == filepath.Join(GetConfigDir(), "logs") {
 		cfg.LogDir = ""
 	}
@@ -456,19 +474,9 @@ func (c *Config) Flush() error {
 	}
 
 	// 原子写入：先写临时文件再重命名
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		Errorf("配置写入失败: path=%s err=%v", tmpPath, err)
+	if err := writePrivateFileAtomically(path, data); err != nil {
+		Errorf("配置写入失败: path=%s err=%v", path, err)
 		return fmt.Errorf("写入临时配置文件失败: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		Errorf("配置替换失败: path=%s err=%v", path, err)
-		return fmt.Errorf("替换配置文件失败: %w", err)
-	}
-	if err := os.Chmod(path, 0600); err != nil {
-		return fmt.Errorf("收紧配置文件权限失败: %w", err)
 	}
 
 	Infof("配置已保存: path=%s", path)

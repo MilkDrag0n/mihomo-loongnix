@@ -5,3 +5,38 @@
 *.log
 /AGENTS.md
 /main
+
+# Runtime state and downloaded cores
+/bin/
+/runtime/
+/state/
+/logs/
+*.pid
+*.sock
+
+# Credentials, subscriptions, generated profiles and local overrides
+/.env
+/.env.*
+!/.env.example
+/secrets/
+/private/
+/subscriptions/
+/proxy_providers/
+/profiles/
+**/secrets/
+**/*.private.yaml
+**/*.private.yml
+**/*.local.yaml
+**/*.local.yml
+**/config.yaml
+**/runtime.yaml
+**/subscription.yaml
+**/subscription-*.yaml
+!**/*.example.yaml
+!**/*.example.yml
+!**/*.sample.yaml
+!**/*.sample.yml
+
+# Local security scanner output
+/.security/
+gitleaks-report.*
