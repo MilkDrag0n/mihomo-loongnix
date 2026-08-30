@@ -2,6 +2,8 @@
 
 本 fork 以 Loongnix GNU/Linux 25、`loongarch64` 用户态和 Go 的 `linux/loong64` 目标为首要运行环境。
 
+程序启动时会在 Linux 上补齐 `/usr/local/sbin`、`/usr/sbin` 和 `/sbin`。Loongnix 普通用户的默认 `PATH` 不包含这些目录，而 `nft`、`ip` 等 TUN 依赖通常安装在 `/usr/sbin`。
+
 ## 构建
 
 ```bash

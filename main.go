@@ -4,11 +4,36 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 
 	"mihomotui/cmd"
 )
 
+// ensureLinuxAdminPath adds the conventional sbin directories used by
+// Loongnix for nft/ip/iptables. Interactive Loongnix users do not necessarily
+// receive these paths, while systemd services usually do; normalizing PATH
+// keeps diagnostics and the daemon consistent without overriding user entries.
+func ensureLinuxAdminPath() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	parts := filepath.SplitList(os.Getenv("PATH"))
+	seen := make(map[string]bool, len(parts))
+	for _, part := range parts {
+		seen[part] = true
+	}
+	for _, dir := range []string{"/usr/local/sbin", "/usr/sbin", "/sbin"} {
+		if !seen[dir] {
+			parts = append(parts, dir)
+		}
+	}
+	_ = os.Setenv("PATH", strings.Join(parts, string(os.PathListSeparator)))
+}
+
 func main() {
+	ensureLinuxAdminPath()
 	dir := flag.String("d", "", "指定配置目录")
 	standalone := flag.Bool("standalone", false, "启动嵌入式服务端（一体模式）")
 	flag.Usage = func() {
