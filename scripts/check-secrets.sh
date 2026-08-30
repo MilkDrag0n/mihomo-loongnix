@@ -25,7 +25,7 @@ key_report=$(mktemp)
 credential_report=$(mktemp)
 trap 'rm -f "$key_report" "$credential_report"' EXIT HUP INT TERM
 
-if git grep -n -E '^-----BEGIN ([A-Z0-9 ]+ )?PRIVATE KEY-----' -- . ':!scripts/check-secrets.sh' >"$key_report" 2>/dev/null; then
+if git grep --cached -n -E '^-----BEGIN ([A-Z0-9 ]+ )?PRIVATE KEY-----' -- . ':!scripts/check-secrets.sh' >"$key_report" 2>/dev/null; then
 	printf '拒绝：检测到被 Git 跟踪的私钥：\n' >&2
 	cat "$key_report" >&2
 	failed=1
@@ -33,7 +33,7 @@ fi
 
 if ! git ls-files '*.yaml' '*.yml' '*.json' '*.toml' '*.conf' '*.ini' '*.env' | while IFS= read -r path; do
 	[ -n "$path" ] || continue
-	if grep -Ein '^[[:space:]]*(password|passwd|token|api[_-]?key|secret|pppoe-(user|password))[[:space:]]*[:=][[:space:]]*[^<{$*[:space:]#][^[:space:]#]*' "$path" | grep -Eiv '(example|placeholder|replace-me|changeme|redacted|dummy|test-only|secret://)' >"$credential_report"; then
+	if git show ":$path" | grep -Ein '^[[:space:]]*(password|passwd|token|api[_-]?key|secret|pppoe-(user|password))[[:space:]]*[:=][[:space:]]*[^<{$*[:space:]#][^[:space:]#]*' | grep -Eiv '(example|placeholder|replace-me|changeme|redacted|dummy|test-only|secret://)' >"$credential_report"; then
 		printf '拒绝：%s 中疑似包含真实凭据：\n' "$path" >&2
 		cat "$credential_report" >&2
 		exit 24
@@ -43,7 +43,7 @@ done; then
 fi
 
 if command -v gitleaks >/dev/null 2>&1; then
-	if ! gitleaks git --redact --no-banner --log-opts=-1; then
+	if ! gitleaks git --redact --no-banner; then
 		printf '拒绝：gitleaks 检测到疑似泄露。\n' >&2
 		failed=1
 	fi
