@@ -560,7 +560,11 @@ func fetchSubscriptionWithOptions(rawURL string, options subscriptionFetchOption
 	}
 	if useLocalProxy {
 		cfg := GlobalConfig()
-		proxyURL, perr := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", cfg.Mihomo.HTTPPort))
+		proxyPort := cfg.localHTTPProxyPort()
+		if proxyPort <= 0 {
+			return subscriptionFetchResult{}, fmt.Errorf("未启用可用于刷新订阅的 HTTP 或 mixed 代理端口")
+		}
+		proxyURL, perr := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", proxyPort))
 		if perr != nil {
 			return subscriptionFetchResult{}, fmt.Errorf("构造本地代理失败: %w", perr)
 		}

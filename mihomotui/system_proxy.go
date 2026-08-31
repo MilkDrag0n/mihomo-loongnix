@@ -26,25 +26,22 @@ func (c *Config) SetSystemProxyEnv(enabled bool) error {
 	}
 
 	// 构建代理地址
-	httpPort := c.Mihomo.MixedPort
+	httpPort := c.localHTTPProxyPort()
 	if httpPort <= 0 {
-		httpPort = c.Mihomo.HTTPPort
+		return fmt.Errorf("未启用 HTTP 或 mixed 代理端口")
 	}
-	if httpPort <= 0 {
-		httpPort = 7892
-	}
-	socksPort := c.Mihomo.SOCKS5Port
-	if socksPort <= 0 {
-		socksPort = 7891
-	}
+	socksPort := c.localSOCKSProxyPort()
 
 	httpAddr := fmt.Sprintf("http://127.0.0.1:%d", httpPort)
-	socksAddr := fmt.Sprintf("socks5://127.0.0.1:%d", socksPort)
+	allProxyAddr := httpAddr
+	if socksPort > 0 {
+		allProxyAddr = fmt.Sprintf("socks5://127.0.0.1:%d", socksPort)
+	}
 
 	block := fmt.Sprintf("%s\nexport http_proxy=%s\nexport https_proxy=%s\nexport HTTP_PROXY=%s\nexport HTTPS_PROXY=%s\nexport ALL_PROXY=%s\nexport all_proxy=%s\nexport no_proxy=localhost,127.0.0.1,::1\nexport NO_PROXY=localhost,127.0.0.1,::1\n%s\n",
 		sysProxyBlockStart,
 		httpAddr, httpAddr, httpAddr, httpAddr,
-		socksAddr, socksAddr,
+		allProxyAddr, allProxyAddr,
 		sysProxyBlockEnd,
 	)
 
@@ -57,7 +54,7 @@ func (c *Config) SetSystemProxyEnv(enabled bool) error {
 			return fmt.Errorf("写入 %s 失败: %w", f, err)
 		}
 	}
-	Infof("系统代理环境变量已注入: http=%s socks=%s", httpAddr, socksAddr)
+	Infof("系统代理环境变量已注入: http=%s all_proxy=%s", httpAddr, allProxyAddr)
 	return nil
 }
 
