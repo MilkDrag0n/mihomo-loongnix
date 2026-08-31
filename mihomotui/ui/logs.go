@@ -2,255 +2,257 @@ package ui
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rivo/tview"
 	"mihomotui/mihomotui"
 )
 
-// LogEntry 单条日志
-type LogEntry struct {
-	Time  string
-	Level string
-	Msg   string
-}
+type logEntry struct{ Time, Level, Message string }
 
-const maxLogBuffer = 2000
+const maxVisibleLogs = 2000
 
-// batchLogEntry 批量日志缓冲条目
-type batchLogEntry struct {
-	entries []LogEntry
-}
-
-// NewLogsPage 创建日志页面
-func NewLogsPage(app *tview.Application) tview.Primitive {
-	logs := make([]LogEntry, 0, maxLogBuffer)
-	currentLevel := "" // "" 表示全部
-
-	// 日志级别下拉框
-	levelDropdown := tview.NewDropDown().
-		SetLabel(" 级别: ").
-		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
-	levelDropdown.AddOption("全部", nil)
-	levelDropdown.AddOption("DEBUG", nil)
-	levelDropdown.AddOption("INFO", nil)
-	levelDropdown.AddOption("WARNING", nil)
-	levelDropdown.AddOption("ERROR", nil)
-	levelDropdown.SetCurrentOption(0)
-
-	// 清空按钮
-	clearBtn := tview.NewButton(" 清空 ")
-	clearBtn.SetBorder(false)
-
-	// 顶部工具栏
-	toolbar := tview.NewFlex().
-		AddItem(levelDropdown, 0, 1, true).
-		AddItem(clearBtn, 10, 0, true)
-
-	// 日志显示区域：关闭自动重绘，由批量定时器统一控制
-	logView := tview.NewTextView().
-		SetDynamicColors(true).
-		SetScrollable(true).
-		SetWrap(true)
-
-	// 单条日志格式化为字符串
-	formatLogLine := func(entry LogEntry) string {
-		color := "white"
-		switch entry.Level {
-		case "DEBUG":
-			color = "gray"
-		case "INFO":
-			color = "green"
-		case "WARNING":
-			color = "yellow"
-		case "ERROR":
-			color = "red"
-		}
-		return fmt.Sprintf("[%s]%s [%-7s] %s[-]\n", color, entry.Time, entry.Level, entry.Msg)
+func formatBytes(value int64) string {
+	units := []string{"B", "KiB", "MiB", "GiB"}
+	size := float64(value)
+	unit := 0
+	for size >= 1024 && unit < len(units)-1 {
+		size /= 1024
+		unit++
 	}
+	if unit == 0 {
+		return fmt.Sprintf("%d %s", value, units[unit])
+	}
+	return fmt.Sprintf("%.2f %s", size, units[unit])
+}
 
-	// 批量追加到视图：用 strings.Builder 一次性写入，减少 TextView 内部重排
-	batchAppendToView := func(entries []LogEntry) {
+func newLogsPage(app *tview.Application, client *mihomotui.IPCClient, overlay *tview.Pages) *pageView {
+	statusView := tview.NewTextView().SetDynamicColors(true).SetWrap(true)
+	filterInput := tview.NewInputField().SetLabel(" 筛选: ").SetPlaceholder("日志内容")
+	levelDrop := tview.NewDropDown().SetLabel(" 级别: ").SetOptions([]string{"全部", "DEBUG", "INFO", "WARNING", "ERROR"}, nil)
+	recordButton := tview.NewButton(" 开启磁盘记录 ")
+	pauseButton := tview.NewButton(" 暂停显示 ")
+	clearButton := tview.NewButton(" 清空界面 ")
+	refreshButton := tview.NewButton(" 刷新大小 ")
+	toolbar1 := tview.NewFlex().AddItem(filterInput, 0, 2, true).AddItem(levelDrop, 20, 0, false).AddItem(recordButton, 18, 0, false)
+	toolbar2 := tview.NewFlex().AddItem(pauseButton, 14, 0, true).AddItem(clearButton, 14, 0, false).AddItem(refreshButton, 14, 0, false).AddItem(nil, 0, 1, false)
+	logView := tview.NewTextView().SetDynamicColors(true).SetScrollable(true).SetWrap(true)
+	logView.SetBorder(true).SetTitle(" Mihomo 实时日志 ")
+	// Keep authoritative disk state on its own two-line row. At the common
+	// 80-column terminal width it otherwise competes with the action buttons
+	// and hides total size or the rotation policy.
+	root := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(toolbar1, 3, 0, true).
+		AddItem(toolbar2, 3, 0, false).
+		AddItem(statusView, 2, 0, false).
+		AddItem(logView, 0, 1, false)
+	var mu sync.Mutex
+	var entries []logEntry
+	level := ""
+	paused := false
+	pending := false
+	var disk mihomotui.LoggingStatus
+	var cancel context.CancelFunc
+	renderStatus := func() {
+		mu.Lock()
+		snapshot := disk
+		mu.Unlock()
+		state := "[gray]关闭[-]"
+		label := "最近文件"
+		if snapshot.Enabled {
+			state = "[green]开启[-]"
+			label = "当前文件"
+			recordButton.SetLabel(" 关闭磁盘记录 ")
+		} else {
+			recordButton.SetLabel(" 开启磁盘记录 ")
+		}
+		name := snapshot.CurrentFile
+		if name == "" {
+			name = "无"
+		}
+		statusView.SetText(fmt.Sprintf(" 记录: %s  %s: %s (%s)  总量: %s  轮转: %s × %d ", state, label, tview.Escape(name), formatBytes(snapshot.CurrentFileBytes), formatBytes(snapshot.TotalBytes), formatBytes(snapshot.MaxFileBytes), snapshot.MaxBackups))
+	}
+	renderLogs := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		logView.Clear()
+		keyword := strings.ToLower(strings.TrimSpace(filterInput.GetText()))
 		var b strings.Builder
 		for _, entry := range entries {
-			if currentLevel != "" && entry.Level != currentLevel {
+			if level != "" && entry.Level != level {
 				continue
 			}
-			b.WriteString(formatLogLine(entry))
-		}
-		if b.Len() > 0 {
-			fmt.Fprint(logView, b.String())
-		}
-	}
-
-	// 重新渲染全部日志（仅在切换级别时使用）
-	renderAllLogs := func() {
-		logView.Clear()
-		var b strings.Builder
-		for _, entry := range logs {
-			if currentLevel != "" && entry.Level != currentLevel {
+			if keyword != "" && !strings.Contains(strings.ToLower(entry.Message), keyword) {
 				continue
 			}
-			b.WriteString(formatLogLine(entry))
+			color := "white"
+			switch entry.Level {
+			case "DEBUG":
+				color = "gray"
+			case "INFO":
+				color = "green"
+			case "WARNING":
+				color = "yellow"
+			case "ERROR":
+				color = "red"
+			}
+			fmt.Fprintf(&b, "[%s]%s [%-7s] %s[-]\n", color, entry.Time, entry.Level, tview.Escape(entry.Message))
 		}
-		if b.Len() > 0 {
-			fmt.Fprint(logView, b.String())
+		fmt.Fprint(logView, b.String())
+		logView.ScrollToEnd()
+	}
+	refreshStatus := func() {
+		go func() {
+			status, err := client.ManagerLoggingStatus()
+			if err != nil {
+				reportError(app, overlay, "读取日志状态失败", err)
+				return
+			}
+			mu.Lock()
+			disk = *status
+			mu.Unlock()
+			app.QueueUpdateDraw(renderStatus)
+		}()
+	}
+	appendEntry := func(entry logEntry) {
+		mu.Lock()
+		if len(entries) >= maxVisibleLogs {
+			copy(entries, entries[len(entries)-maxVisibleLogs+1:])
+			entries = entries[:maxVisibleLogs-1]
+		}
+		entries = append(entries, entry)
+		shouldRender := !paused
+		mu.Unlock()
+		if shouldRender {
+			renderLogs()
 		}
 	}
-
-	// 级别切换
-	levelDropdown.SetSelectedFunc(func(text string, index int) {
-		if text == "全部" {
-			currentLevel = ""
-		} else {
-			currentLevel = text
-		}
-		renderAllLogs()
-	})
-
-	// 清空
-	clearBtn.SetSelectedFunc(func() {
-		logs = logs[:0]
-		logView.Clear()
-	})
-
-	// 批量日志缓冲 channel + 定时刷新
-	logBatchCh := make(chan []LogEntry, 16)
-
-	// 消费者：定时批量刷新到 UI
-	go func() {
-		ticker := time.NewTicker(200 * time.Millisecond)
-		defer ticker.Stop()
-
-		var pending []LogEntry
-		for {
-			select {
-			case batch, ok := <-logBatchCh:
-				if !ok {
-					// channel 关闭，刷完剩余退出
-					if len(pending) > 0 {
-						app.QueueUpdateDraw(func() {
-							batchAppendToView(pending)
-						})
-					}
-					return
-				}
-				pending = append(pending, batch...)
-
-			case <-ticker.C:
-				if len(pending) == 0 {
-					continue
-				}
-				// 复制一份 pending，清空原切片，然后在 UI 线程写入
-				toFlush := make([]LogEntry, len(pending))
-				copy(toFlush, pending)
-				pending = pending[:0]
-
-				app.QueueUpdateDraw(func() {
-					// 同步更新内存日志缓存
-					for _, entry := range toFlush {
-						if len(logs) >= maxLogBuffer {
-							logs = logs[1:]
-						}
-						logs = append(logs, entry)
-					}
-					batchAppendToView(toFlush)
-				})
+	stream := func(ctx context.Context) {
+		// Subscribe at debug level once; the level dropdown is a stable
+		// client-side filter and must not silently miss lower-severity events.
+		resp, err := client.ManagerLogStream("debug")
+		if err != nil {
+			if ctx.Err() == nil {
+				reportError(app, overlay, "实时日志连接失败", err)
 			}
-		}
-	}()
-
-	// 获取 mihomo 实时日志流
-	go func() {
-		api, err := mihomotui.GetMihomoAPI()
-		if err != nil {
-			mihomotui.Warnf("获取日志流失败: %v", err)
-			return
-		}
-		resp, err := api.GetLogsStream("")
-		if err != nil {
-			mihomotui.Warnf("获取日志流失败: %v", err)
 			return
 		}
 		defer resp.Body.Close()
-
+		go func() { <-ctx.Done(); _ = resp.Body.Close() }()
 		scanner := bufio.NewScanner(resp.Body)
-		var batch []LogEntry
-		const batchSize = 100
-
-		flushBatch := func() {
-			if len(batch) == 0 {
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			if ctx.Err() != nil {
 				return
 			}
-			// 复制后发送到 channel，避免被后续修改覆盖
-			toSend := make([]LogEntry, len(batch))
-			copy(toSend, batch)
-			select {
-			case logBatchCh <- toSend:
-			default:
-				// channel 满则丢弃最老的一批，保证不阻塞 SSE 读取线程
-				select {
-				case <-logBatchCh:
-				default:
-				}
-				select {
-				case logBatchCh <- toSend:
-				default:
-				}
-			}
-			batch = batch[:0]
-		}
-
-		for scanner.Scan() {
-			line := scanner.Text()
-			// mihomo /logs 返回 SSE 格式: data: {"type":"info","payload":"xxx"}
-			line = strings.TrimSpace(line)
+			line := strings.TrimSpace(scanner.Text())
+			line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if line == "" {
 				continue
 			}
-			if after, ok := strings.CutPrefix(line, "data:"); ok {
-				line = strings.TrimSpace(after)
-			}
-			if line == "" {
-				continue
-			}
-			var logMsg struct {
+			var message struct {
 				Type    string `json:"type"`
 				Payload string `json:"payload"`
 			}
-			if err := json.Unmarshal([]byte(line), &logMsg); err != nil {
+			if json.Unmarshal([]byte(line), &message) != nil {
 				continue
 			}
-			level := "INFO"
-			switch logMsg.Type {
-			case "debug":
-				level = "DEBUG"
-			case "warning":
-				level = "WARNING"
-			case "error":
-				level = "ERROR"
+			levelName := strings.ToUpper(message.Type)
+			if levelName == "WARN" {
+				levelName = "WARNING"
 			}
-			batch = append(batch, LogEntry{
-				Time:  time.Now().Format("15:04:05"),
-				Level: level,
-				Msg:   logMsg.Payload,
-			})
-
-			if len(batch) >= batchSize {
-				flushBatch()
+			if levelName == "" {
+				levelName = "INFO"
 			}
+			entry := logEntry{Time: time.Now().Format("15:04:05"), Level: levelName, Message: message.Payload}
+			app.QueueUpdateDraw(func() { appendEntry(entry) })
 		}
-		// 刷完最后一批
-		flushBatch()
-	}()
-
-	// 主布局
-	page := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(toolbar, 3, 0, true).
-		AddItem(logView, 0, 1, true)
-
-	return page
+	}
+	start := func() {
+		if cancel != nil {
+			cancel()
+		}
+		ctx, c := context.WithCancel(context.Background())
+		cancel = c
+		go stream(ctx)
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					status, err := client.ManagerLoggingStatus()
+					if err == nil {
+						mu.Lock()
+						disk = *status
+						mu.Unlock()
+						app.QueueUpdateDraw(renderStatus)
+					}
+				}
+			}
+		}()
+	}
+	stop := func() {
+		if cancel != nil {
+			cancel()
+			cancel = nil
+		}
+	}
+	filterInput.SetChangedFunc(func(string) { renderLogs() })
+	levelDrop.SetSelectedFunc(func(text string, index int) {
+		mu.Lock()
+		if index == 0 {
+			level = ""
+		} else {
+			level = text
+		}
+		mu.Unlock()
+		renderLogs()
+	})
+	recordButton.SetSelectedFunc(func() {
+		mu.Lock()
+		if pending {
+			mu.Unlock()
+			return
+		}
+		pending = true
+		target := !disk.Enabled
+		mu.Unlock()
+		go func() {
+			status, err := client.ManagerSetLogging(target)
+			mu.Lock()
+			pending = false
+			if err == nil {
+				disk = *status
+			}
+			mu.Unlock()
+			if err != nil {
+				reportError(app, overlay, "切换磁盘日志失败", err)
+				return
+			}
+			app.QueueUpdateDraw(renderStatus)
+		}()
+	})
+	pauseButton.SetSelectedFunc(func() {
+		mu.Lock()
+		paused = !paused
+		nowPaused := paused
+		mu.Unlock()
+		if nowPaused {
+			pauseButton.SetLabel(" 继续显示 ")
+		} else {
+			pauseButton.SetLabel(" 暂停显示 ")
+			renderLogs()
+		}
+	})
+	clearButton.SetSelectedFunc(func() { mu.Lock(); entries = nil; mu.Unlock(); logView.Clear() })
+	refreshButton.SetSelectedFunc(refreshStatus)
+	return &pageView{Primitive: root, focusables: []tview.Primitive{filterInput, levelDrop, recordButton, pauseButton, clearButton, refreshButton, logView}, first: logView, filter: filterInput, start: start, stop: stop, refresh: refreshStatus}
 }

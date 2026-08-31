@@ -5,11 +5,11 @@ repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
 failed=0
-forbidden_path='(^|/)(secrets|private|subscriptions|proxy_providers)(/|$)|(^|/)(config|runtime|subscription)(-[^/]*)?\.ya?ml$|(^|/)\.env($|\.)'
+forbidden_path='(^|/)(secrets|private|subscriptions|proxy_providers|profiles|logs|runtime|state)(/|$)|(^|/)(config|runtime|subscription)(-[^/]*)?\.ya?ml$|(^|/)\.env($|\.)|\.(key|p12|pfx|token|secret)$'
 
 if ! git ls-files | while IFS= read -r path; do
 	case "$path" in
-		*.example.yaml|*.example.yml|*.sample.yaml|*.sample.yml|.env.example)
+		*.example.yaml|*.example.yml|*.sample.yaml|*.sample.yml|*.example.pem|.env.example)
 			continue
 			;;
 	esac

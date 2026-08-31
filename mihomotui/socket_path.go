@@ -18,6 +18,14 @@ func rootSocketPath() string {
 	return filepath.Join(SocketDir, SocketFile)
 }
 
+func socketOverridePath() string {
+	raw := os.Getenv("MIHOMO_TUI_SOCKET")
+	if raw == "" || !filepath.IsAbs(raw) {
+		return ""
+	}
+	return filepath.Clean(raw)
+}
+
 // userSocketPath 是普通用户 standalone daemon 的私有 socket，避免与 root daemon 争用 /run 路径。
 func userSocketPath() string {
 	base := os.Getenv("XDG_RUNTIME_DIR")
@@ -29,6 +37,9 @@ func userSocketPath() string {
 
 // daemonSocketPath 根据 daemon 实际运行身份选择 socket。root daemon 使用共享路径，普通用户 daemon 使用私有路径。
 func daemonSocketPath() string {
+	if override := socketOverridePath(); override != "" {
+		return override
+	}
 	if os.Geteuid() == 0 {
 		return rootSocketPath()
 	}
@@ -44,6 +55,9 @@ func clientSocketPath() string {
 }
 
 func clientSocketPathWithError() (string, error) {
+	if override := socketOverridePath(); override != "" {
+		return override, nil
+	}
 	rootPath := rootSocketPath()
 	if err := dialSocket(rootPath); err == nil {
 		return rootPath, nil

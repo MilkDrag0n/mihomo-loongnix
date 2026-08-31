@@ -29,7 +29,7 @@ const (
 	DefaultRefreshInterval   = 5 * time.Second
 	DefaultStreamInterval    = 200 * time.Millisecond
 	DefaultDaemonWaitTimeout = 5 * time.Second
-	DefaultIPCRequestTimeout = 30 * time.Second
+	DefaultIPCRequestTimeout = 60 * time.Second
 )
 
 // Socket 路径

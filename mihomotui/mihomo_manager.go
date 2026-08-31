@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -53,12 +54,13 @@ func GetCurrentMihomoVersion() (string, error) {
 // getMihomoBinaryVersion reads the actual version from a specific executable.
 // 启动器使用该函数记录真正启动的二进制版本，避免把“选中的版本”误当作运行版本。
 func getMihomoBinaryVersion(binaryPath string) (string, error) {
-	cmd := exec.Command(binaryPath, "-v")
-	output, err := cmd.CombinedOutput()
+	output, err := runMihomoVersionCommand(binaryPath, "-v")
 	if err != nil {
+		if strings.Contains(err.Error(), "命令超时") {
+			return "", err
+		}
 		// 尝试 mihomo version 子命令
-		cmd = exec.Command(binaryPath, "version")
-		output, err = cmd.CombinedOutput()
+		output, err = runMihomoVersionCommand(binaryPath, "version")
 		if err != nil {
 			Errorf("执行 mihomo 版本命令失败: %v", err)
 			return "", fmt.Errorf("执行 mihomo 版本命令失败: %w", err)
@@ -73,6 +75,29 @@ func getMihomoBinaryVersion(binaryPath string) (string, error) {
 	}
 	Infof("mihomo 二进制版本: %s", version)
 	return normalizeMihomoVersion(version), nil
+}
+
+func runMihomoVersionCommand(binaryPath, argument string) ([]byte, error) {
+	output := newCappedBuffer(64 * 1024)
+	cmd := exec.Command(binaryPath, argument)
+	cmd.Stdout, cmd.Stderr = output, output
+	configureProcessGroup(cmd)
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return []byte(output.String()), err
+	case <-time.After(5 * time.Second):
+		_ = signalProcessTree(cmd.Process, sigKill)
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+		return []byte(output.String()), fmt.Errorf("mihomo %s 命令超时", argument)
+	}
 }
 
 // FindMihomoBinary 查找 mihomo 可执行文件路径（导出）

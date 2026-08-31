@@ -85,6 +85,12 @@ func (c *Config) Validate() error {
 	if !validAppLogLevels[c.LogLevel] {
 		add("应用 log_level 非法: %q（可选 debug/info/warn/error）", c.LogLevel)
 	}
+	if c.ManagedLogging.MaxFileBytes != 0 && (c.ManagedLogging.MaxFileBytes < 1024 || c.ManagedLogging.MaxFileBytes > 1<<30) {
+		add("受管日志单文件上限必须在 1 KiB 到 1 GiB 之间")
+	}
+	if c.ManagedLogging.MaxBackups != 0 && (c.ManagedLogging.MaxBackups < 1 || c.ManagedLogging.MaxBackups > 100) {
+		add("受管日志历史分卷数量必须在 1 到 100 之间")
+	}
 
 	// ---- 延迟测试 URL：允许留空；否则必须是 http/https ----
 	if tu := strings.TrimSpace(c.Mihomo.TestURL); tu != "" {

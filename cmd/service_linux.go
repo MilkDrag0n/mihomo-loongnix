@@ -75,15 +75,21 @@ func InstallService() error {
 		return fmt.Errorf("安装系统服务需要 root 权限，请使用 sudo 运行")
 	}
 
-	// 2. 若服务正在运行，先停止并清理环境
-	if output, _ := exec.Command("systemctl", "is-active", "mihomo-tui").CombinedOutput(); strings.TrimSpace(string(output)) == "active" {
-		mihomotui.Infof("检测到服务正在运行，先停止...")
-		if output, err := exec.Command("systemctl", "stop", "mihomo-tui").CombinedOutput(); err != nil {
-			return fmt.Errorf("停止现有服务失败: %w, 输出: %s", err, string(output))
+	// 2. 在停止旧的一体服务前，从控制接口确认内核是否真的在运行。
+	// 不能只看 mihomo-tui.service：旧 manager 可以存活而内核已经退出。
+	// 切换完成后恢复这个真实状态，避免升级把正在使用的代理留在停止状态。
+	coreWasRunning := false
+	if _, err := mihomotui.NewMihomoAPIFromConfig().GetVersion(); err == nil {
+		coreWasRunning = true
+	}
+	// 停止旧的一体服务和已有 manager；已经独立运行的 mihomo.service
+	// 暂不停止，unit 文件通过原子 rename 更新后继续沿用当前进程。
+	for _, service := range []string{"mihomo-tui.service", "mihomo-manager.service"} {
+		if output, _ := exec.Command("systemctl", "is-active", service).CombinedOutput(); strings.TrimSpace(string(output)) == "active" {
+			if output, err := exec.Command("systemctl", "stop", service).CombinedOutput(); err != nil {
+				return fmt.Errorf("停止 %s 失败: %w, 输出: %s", service, err, string(output))
+			}
 		}
-		mihomotui.Infof("已停止现有服务")
-		// 停止后手动清理环境（ExecStop 可能未触发或已执行）
-		mihomotui.CleanupEnvironment()
 	}
 
 	// 3. 确保 root daemon 的 IPC 授权组存在：mihomo-tui 仅允许读取状态，
@@ -120,33 +126,22 @@ func InstallService() error {
 		mihomotui.Infof("已原子替换可执行文件: %s", targetPath)
 	}
 
-	// 6. 以 root 用户运行服务
-	runUser := "root"
-
-	// 7. 生成 systemd unit 文件
-	unitPath := "/etc/systemd/system/mihomo-tui.service"
-	tmpl, err := template.New("unit").Parse(ServiceUnitTemplate)
-	if err != nil {
-		return fmt.Errorf("解析服务模板失败: %w", err)
+	// 6. 生成相互独立的 manager 与 core unit。内核路径在安装时解析为
+	// 绝对路径，避免 systemd PATH 与交互终端不一致。
+	corePath := mihomotui.FindMihomoBinary()
+	if corePath == "" {
+		return fmt.Errorf("未找到 mihomo 内核；请先将兼容 LoongArch ABI2 的 mihomo 放入 /var/lib/mihomo-tui/bin/mihomo")
 	}
-
-	f, err := os.Create(unitPath)
-	if err != nil {
-		return fmt.Errorf("创建服务文件 %s 失败: %w", unitPath, err)
+	stateDir := mihomotui.GetConfigDir()
+	managerUnitPath := "/etc/systemd/system/mihomo-manager.service"
+	coreUnitPath := "/etc/systemd/system/mihomo.service"
+	if err := renderServiceUnit(managerUnitPath, ManagerServiceUnitTemplate, struct{ ManagerPath, StateDir string }{targetPath, stateDir}); err != nil {
+		return err
 	}
-	defer f.Close()
-
-	data := struct {
-		ExecPath string
-		User     string
-	}{
-		ExecPath: targetPath,
-		User:     runUser,
+	if err := renderServiceUnit(coreUnitPath, CoreServiceUnitTemplate, struct{ CorePath, StateDir, ConfigPath string }{corePath, stateDir, filepath.Join(stateDir, "mihomo", "config.yaml")}); err != nil {
+		return err
 	}
-	if err := tmpl.Execute(f, data); err != nil {
-		return fmt.Errorf("渲染服务模板失败: %w", err)
-	}
-	mihomotui.Infof("已写入服务文件: %s", unitPath)
+	_ = os.Remove("/etc/systemd/system/mihomo-tui.service")
 
 	// 8. daemon-reload
 	if output, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
@@ -154,28 +149,57 @@ func InstallService() error {
 	}
 	mihomotui.Infof("已执行 systemctl daemon-reload")
 
-	// 9. enable 服务
-	if output, err := exec.Command("systemctl", "enable", "mihomo-tui").CombinedOutput(); err != nil {
+	// 8. manager 随系统启动；core 只由 manager/TUI 显式控制。
+	if output, err := exec.Command("systemctl", "enable", "mihomo-manager.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl enable 失败: %w, 输出: %s", err, string(output))
 	}
-	mihomotui.Infof("已执行 systemctl enable mihomo-tui")
+	_, _ = exec.Command("systemctl", "disable", "mihomo.service").CombinedOutput()
 
-	// 10. 启动服务
-	if output, err := exec.Command("systemctl", "start", "mihomo-tui").CombinedOutput(); err != nil {
+	// 9. 启动 manager，并恢复切换前经控制接口确认的内核运行状态。
+	if output, err := exec.Command("systemctl", "start", "mihomo-manager.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("启动服务失败: %w, 输出: %s", err, string(output))
 	}
-	mihomotui.Infof("已执行 systemctl start mihomo-tui")
+	if coreWasRunning {
+		if output, err := exec.Command("systemctl", "start", "mihomo.service").CombinedOutput(); err != nil {
+			return fmt.Errorf("manager 已启动，但恢复 mihomo 内核失败: %w, 输出: %s", err, string(output))
+		}
+	}
 
-	fmt.Println("✅ mihomo-tui 系统服务安装成功")
-	fmt.Printf("   服务文件: %s\n", unitPath)
-	fmt.Printf("   运行用户: %s\n", runUser)
+	fmt.Println("✅ mihomo manager/core 双服务安装成功")
+	fmt.Printf("   Manager: %s\n", managerUnitPath)
+	fmt.Printf("   Core: %s\n", coreUnitPath)
 	fmt.Printf("   可执行文件: %s\n", targetPath)
 	fmt.Println("")
 	fmt.Println("使用以下命令管理服务:")
-	fmt.Println("   sudo systemctl start   mihomo-tui")
-	fmt.Println("   sudo systemctl stop    mihomo-tui")
-	fmt.Println("   sudo systemctl restart mihomo-tui")
-	fmt.Println("   sudo systemctl status  mihomo-tui")
+	fmt.Println("   sudo systemctl status mihomo-manager mihomo")
+	return nil
+}
+
+func renderServiceUnit(path, source string, data any) error {
+	tmpl, err := template.New(filepath.Base(path)).Parse(source)
+	if err != nil {
+		return fmt.Errorf("解析服务模板失败: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".mihomo-unit-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmpl.Execute(tmp, data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0644); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -271,34 +295,19 @@ func UninstallService() error {
 		return fmt.Errorf("卸载系统服务需要 root 权限，请使用 sudo 运行")
 	}
 
-	unitPath := "/etc/systemd/system/mihomo-tui.service"
 	binPath := "/usr/local/bin/mihomo-tui"
 
 	// 2. 若服务正在运行，先停止并清理环境
-	if output, _ := exec.Command("systemctl", "is-active", "mihomo-tui").CombinedOutput(); strings.TrimSpace(string(output)) == "active" {
-		mihomotui.Infof("检测到服务正在运行，先停止...")
-		if output, err := exec.Command("systemctl", "stop", "mihomo-tui").CombinedOutput(); err != nil {
-			return fmt.Errorf("停止服务失败: %w, 输出: %s", err, string(output))
-		}
-		mihomotui.Infof("已停止服务")
+	for _, service := range []string{"mihomo-manager.service", "mihomo.service", "mihomo-tui.service"} {
+		_, _ = exec.Command("systemctl", "disable", "--now", service).CombinedOutput()
 	}
 	// 手动清理环境（systemd stop 已触发 ExecStop，再做一次兜底）
 	mihomotui.CleanupEnvironment()
 
-	// 3. disable 服务
-	if _, err := os.Stat(unitPath); err == nil {
-		if output, err := exec.Command("systemctl", "disable", "mihomo-tui").CombinedOutput(); err != nil {
-			return fmt.Errorf("systemctl disable 失败: %w, 输出: %s", err, string(output))
+	for _, unitPath := range []string{"/etc/systemd/system/mihomo-manager.service", "/etc/systemd/system/mihomo.service", "/etc/systemd/system/mihomo-tui.service"} {
+		if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
+			return err
 		}
-		mihomotui.Infof("已执行 systemctl disable mihomo-tui")
-	}
-
-	// 4. 删除服务文件
-	if _, err := os.Stat(unitPath); err == nil {
-		if err := os.Remove(unitPath); err != nil {
-			return fmt.Errorf("删除服务文件 %s 失败: %w", unitPath, err)
-		}
-		mihomotui.Infof("已删除服务文件: %s", unitPath)
 	}
 
 	// 5. 删除可执行文件

@@ -73,6 +73,35 @@ func TestGetProxyGroupsMergesProviderNodesForMihomo11928(t *testing.T) {
 	}
 }
 
+func TestGetProxyGroupsPreservesMihomoAllOrder(t *testing.T) {
+	useTestConfigDir(t)
+	cfg := *GlobalConfig()
+	cfg.MihomoRunningVersion = "1.19.27"
+	SetGlobalConfig(cfg)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"proxies":{"Auto":{"name":"Auto","type":"Selector","all":["slow-first","fast-second","untested-third"]},"slow-first":{"name":"slow-first","type":"Shadowsocks","history":[{"delay":300}]},"fast-second":{"name":"fast-second","type":"Shadowsocks","history":[{"delay":20}]},"untested-third":{"name":"untested-third","type":"Shadowsocks"}}}`)
+	}))
+	defer server.Close()
+
+	groups, err := NewMihomoAPI(server.URL, "").GetProxyGroups()
+	if err != nil {
+		t.Fatalf("GetProxyGroups() error = %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("groups = %#v, want one group", groups)
+	}
+	want := []string{"slow-first", "fast-second", "untested-third"}
+	for i, node := range groups[0].Nodes {
+		if i >= len(want) || node.Name != want[i] {
+			t.Fatalf("node order = %#v, want %#v", groups[0].Nodes, want)
+		}
+	}
+	if len(groups[0].Nodes) != len(want) {
+		t.Fatalf("node count = %d, want %d", len(groups[0].Nodes), len(want))
+	}
+}
+
 func TestTestProxyDelayUsesProviderEndpointForMihomo11928(t *testing.T) {
 	useTestConfigDir(t)
 	cfg := *GlobalConfig()

@@ -10,17 +10,17 @@ type VersionInfo struct {
 
 // ProxyNode 代理节点
 type ProxyNode struct {
-	Name  string
-	Type  string
-	Delay int // ms, -1=超时, -2=测试中, -3=未测试
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Delay int    `json:"delay"` // ms, -1=超时, -2=测试中, -3=未测试
 }
 
 // ProxyGroup 代理组
 type ProxyGroup struct {
-	Name  string
-	Type  string // Selector / URLTest / Fallback / LoadBalance
-	Now   string // 当前选中的节点名（mihomo API 的 now 字段）
-	Nodes []ProxyNode
+	Name  string      `json:"name"`
+	Type  string      `json:"type"` // Selector / URLTest / Fallback / LoadBalance
+	Now   string      `json:"now"`  // 当前选中的节点名（mihomo API 的 now 字段）
+	Nodes []ProxyNode `json:"nodes"`
 }
 
 // Connection 连接项
@@ -37,9 +37,9 @@ type Connection struct {
 
 // Rule 规则项
 type Rule struct {
-	Content string
-	Type    string
-	Policy  string
+	Content string `json:"content"`
+	Type    string `json:"type"`
+	Policy  string `json:"policy"`
 }
 
 // mihomo API 内部响应结构

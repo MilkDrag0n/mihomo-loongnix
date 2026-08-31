@@ -32,10 +32,18 @@
 **/runtime.yaml
 **/subscription.yaml
 **/subscription-*.yaml
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.crt
+**/*.token
+**/*.secret
 !**/*.example.yaml
 !**/*.example.yml
 !**/*.sample.yaml
 !**/*.sample.yml
+!**/*.example.pem
 
 # Local security scanner output
 /.security/

@@ -124,7 +124,7 @@ func TestHandleConfigPostValidationConflictAndApplyStatus(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("invalid config status = %d, want 400", recorder.Code)
 	}
-	if got := GlobalConfig().Mihomo.HTTPPort; got != 7890 {
+	if got := GlobalConfig().Mihomo.HTTPPort; got != 0 {
 		t.Fatalf("invalid commit changed state: http port = %d", got)
 	}
 

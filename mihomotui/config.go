@@ -28,6 +28,15 @@ type SystemConfig struct {
 	Language    string `yaml:"language"`
 }
 
+// ManagedLoggingConfig controls the optional on-disk copy of mihomo runtime
+// logs. Application diagnostics are written to stderr/journald and are not
+// mixed into these files.
+type ManagedLoggingConfig struct {
+	Enabled      bool  `yaml:"enabled" json:"enabled"`
+	MaxFileBytes int64 `yaml:"max_file_bytes" json:"max_file_bytes"`
+	MaxBackups   int   `yaml:"max_backups" json:"max_backups"`
+}
+
 // MihomoConfig mihomo 内核设置
 type MihomoConfig struct {
 	HTTPPort           int    `yaml:"http_port"`
@@ -163,16 +172,17 @@ type Config struct {
 	ActiveSubscription        int                        `yaml:"active_subscription"`
 	RuleProviderSubscriptions []RuleProviderSubscription `yaml:"rule_provider_subscriptions"`
 	// CustomRules is retained for backward-compatible YAML reads; new writes use PreCustomRules.
-	CustomRules             []string          `yaml:"custom_rules,omitempty"`
-	PreCustomRules          []string          `yaml:"pre_custom_rules,omitempty"`
-	PostCustomRules         []string          `yaml:"post_custom_rules,omitempty"`
-	BuiltInRulesInitialized bool              `yaml:"built_in_rules_initialized,omitempty"`
-	BuiltInRules            []BuiltInRule     `yaml:"built_in_rules,omitempty"`
-	ExternalResources       ExternalResources `yaml:"external_resources"`
-	ProxyMode               string            `yaml:"proxy_mode"`
-	DefaultProxyGroup       string            `yaml:"default_proxy_group"`
-	LogDir                  string            `yaml:"log_dir"`
-	LogLevel                string            `yaml:"log_level"`
+	CustomRules             []string             `yaml:"custom_rules,omitempty"`
+	PreCustomRules          []string             `yaml:"pre_custom_rules,omitempty"`
+	PostCustomRules         []string             `yaml:"post_custom_rules,omitempty"`
+	BuiltInRulesInitialized bool                 `yaml:"built_in_rules_initialized,omitempty"`
+	BuiltInRules            []BuiltInRule        `yaml:"built_in_rules,omitempty"`
+	ExternalResources       ExternalResources    `yaml:"external_resources"`
+	ProxyMode               string               `yaml:"proxy_mode"`
+	DefaultProxyGroup       string               `yaml:"default_proxy_group"`
+	LogDir                  string               `yaml:"log_dir"`
+	LogLevel                string               `yaml:"log_level"`
+	ManagedLogging          ManagedLoggingConfig `yaml:"managed_logging" json:"managed_logging"`
 }
 
 // 下载 URL 常量已迁移至 constants.go，保留别名避免编译中断
@@ -190,7 +200,7 @@ var (
 
 func init() {
 	globalConfig = LoadConfig()
-	_ = InitLogger(globalConfig.LogDir, globalConfig.LogLevel)
+	_ = InitConsoleLogger(os.Stderr, globalConfig.LogLevel)
 }
 
 // GlobalConfig 返回全局配置的只读快照（深拷贝指针，线程安全）。
@@ -232,12 +242,11 @@ func SetCustomConfigDir(dir string) {
 	configMu.Lock()
 	customConfigDir = absDir
 	configMu.Unlock()
-	// 重新加载配置和日志
+	// 重新加载配置；应用诊断始终输出到 stderr/journald，受管磁盘日志
+	// 仅由 root manager 的独立记录器负责。
 	cfg := LoadConfig()
 	SetGlobalConfig(cfg)
-	if err := InitLogger(cfg.LogDir, cfg.LogLevel); err != nil {
-		Warnf("重新初始化日志失败: %v", err)
-	}
+	_ = InitConsoleLogger(os.Stderr, cfg.LogLevel)
 	Infof("配置目录已设置为: %s", absDir)
 }
 
@@ -254,16 +263,16 @@ func defaultConfig() Config {
 		MihomoConfigPath: filepath.Join(GetConfigDir(), "mihomo", MIHOMO_CONFIG_NAME),
 		System: SystemConfig{
 			AutoStart:   false,
-			SystemProxy: true,
+			SystemProxy: false,
 			TUN:         false,
 			Language:    "zh-CN",
 		},
 		Mihomo: MihomoConfig{
-			HTTPPort:           7890,
-			SOCKS5Port:         7891,
-			MixedPort:          7892,
-			RedirPort:          7893,
-			TProxyPort:         7894,
+			HTTPPort:           0,
+			SOCKS5Port:         0,
+			MixedPort:          7890,
+			RedirPort:          0,
+			TProxyPort:         0,
 			AllowLan:           false,
 			IPv6:               true,
 			UnifiedDelay:       true,
@@ -286,6 +295,11 @@ func defaultConfig() Config {
 		DefaultProxyGroup:       "Auto",
 		LogDir:                  filepath.Join(GetConfigDir(), "logs"),
 		LogLevel:                "info",
+		ManagedLogging: ManagedLoggingConfig{
+			Enabled:      false,
+			MaxFileBytes: 10 << 20,
+			MaxBackups:   3,
+		},
 	}
 }
 
@@ -438,6 +452,12 @@ func LoadConfig() Config {
 	}
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = "info"
+	}
+	if cfg.ManagedLogging.MaxFileBytes <= 0 {
+		cfg.ManagedLogging.MaxFileBytes = 10 << 20
+	}
+	if cfg.ManagedLogging.MaxBackups <= 0 {
+		cfg.ManagedLogging.MaxBackups = 3
 	}
 	if cfg.DefaultProxyGroup == "" {
 		cfg.DefaultProxyGroup = "Auto"

@@ -105,16 +105,16 @@ chmod +x "${TMP_BIN}"
 
 # ---------- 检查并停止已有服务 ----------
 # 注意：先下载完再停止，利用旧版服务的代理能力访问 GitHub
-SERVICE_NAME="mihomo-tui"
+SERVICE_NAME="mihomo-manager"
 SERVICE_WAS_ACTIVE=false
 
-if systemctl list-unit-files --type=service | grep -q "^${SERVICE_NAME}\.service"; then
-    if systemctl is-active --quiet "${SERVICE_NAME}"; then
-        echo ">>> 检测到 ${SERVICE_NAME} 服务正在运行，先停止..."
-        systemctl stop "${SERVICE_NAME}"
+for candidate in mihomo-manager mihomo-tui; do
+    if systemctl list-unit-files --type=service | grep -q "^${candidate}\.service" && systemctl is-active --quiet "${candidate}"; then
+        echo ">>> 检测到 ${candidate} 服务正在运行，先停止..."
+        systemctl stop "${candidate}"
         SERVICE_WAS_ACTIVE=true
     fi
-fi
+done
 
 # ---------- 安装二进制 ----------
 echo ">>> 安装到 ${INSTALL_DIR} ..."
@@ -143,7 +143,7 @@ echo "   可执行文件: ${INSTALL_DIR}/mihomo-tui"
 echo "   配置目录  : /var/lib/mihomo-tui (root) 或 ~/.config/mihomo-tui"
 echo ""
 echo "常用命令:"
-echo "   sudo systemctl status  mihomo-tui"
-echo "   sudo systemctl stop    mihomo-tui"
-echo "   sudo systemctl restart mihomo-tui"
+echo "   sudo systemctl status  mihomo-manager mihomo"
+echo "   sudo systemctl restart mihomo-manager"
+echo "   sudo systemctl stop    mihomo"
 echo "   mihomo-tui             # 启动 TUI 客户端"

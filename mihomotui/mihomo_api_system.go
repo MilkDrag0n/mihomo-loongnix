@@ -1,6 +1,7 @@
 package mihomotui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,11 +14,21 @@ import (
 // GetLogsStream 获取实时日志流（GET / WS）
 // level 可选值: info, warning, error, debug
 func (c *MihomoAPI) GetLogsStream(level string) (*http.Response, error) {
+	return c.GetLogsStreamContext(context.Background(), level)
+}
+
+// GetLogsStreamContext allows the manager to close a stream immediately when
+// the viewer leaves the page or disk recording is disabled.
+func (c *MihomoAPI) GetLogsStreamContext(ctx context.Context, level string) (*http.Response, error) {
 	query := make(map[string]string)
 	if level != "" {
 		query["level"] = level
 	}
-	return c.doStream(http.MethodGet, "/logs", query)
+	req, err := c.buildRequest(http.MethodGet, "/logs", nil, query)
+	if err != nil {
+		return nil, err
+	}
+	return (&http.Client{}).Do(req.WithContext(ctx))
 }
 
 // ========== 流量信息 ==========

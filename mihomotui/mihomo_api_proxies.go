@@ -253,23 +253,8 @@ func (c *MihomoAPI) GetProxyGroups() ([]ProxyGroup, error) {
 				Delay: delay,
 			})
 		}
-		// 按延迟排序（低延迟优先，超时/未测试/测试中排最后），相同时按名称
-		sort.Slice(group.Nodes, func(i, j int) bool {
-			di, dj := group.Nodes[i].Delay, group.Nodes[j].Delay
-			if di == dj {
-				return group.Nodes[i].Name < group.Nodes[j].Name
-			}
-			if di >= 0 && dj >= 0 {
-				return di < dj
-			}
-			if di >= 0 {
-				return true
-			}
-			if dj >= 0 {
-				return false
-			}
-			return di > dj
-		})
+		// proxy.All 的顺序由 Mihomo 当前运行配置提供，也就是
+		// 订阅/配置中的原始节点顺序。这里不得按延迟或名称二次排序。
 		groups = append(groups, group)
 	}
 

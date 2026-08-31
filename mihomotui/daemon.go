@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,10 +17,14 @@ import (
 // Daemon IPC 服务端
 type Daemon struct {
 	mu              sync.RWMutex
+	actionMu        sync.Mutex
+	delayMu         sync.Mutex
 	listener        net.Listener
 	server          *http.Server
 	mihomoAPI       *MihomoAPI
 	mihomoProcess   *MihomoProcess
+	core            coreController
+	logRecorder     *ManagedLogRecorder
 	upgradeProgress UpgradeProgress
 
 	// 配置应用串行化（P1）：所有运行时应用任务经 reconcileCh 排队逐个执行。
@@ -48,9 +54,27 @@ func (d *Daemon) Run() error {
 	if configDir == "" {
 		return fmt.Errorf("配置目录未初始化")
 	}
+	mixedPort, controller, err := managerRuntimeNetwork()
+	if err != nil {
+		return err
+	}
 
 	// 初始化全局配置（服务端独占）
 	cfg := GlobalConfig()
+	if cfg.Mihomo.HTTPPort != 0 || cfg.Mihomo.SOCKS5Port != 0 || cfg.Mihomo.MixedPort != mixedPort || cfg.Mihomo.RedirPort != 0 || cfg.Mihomo.TProxyPort != 0 || cfg.Mihomo.ExternalController != controller || cfg.ProxyMode != "rule" || cfg.System.SystemProxy || profilePoolNeedsNormalization(cfg) {
+		committed, err := UpdateGlobalConfig(func(c *Config) error {
+			c.Mihomo.HTTPPort, c.Mihomo.SOCKS5Port, c.Mihomo.MixedPort = 0, 0, mixedPort
+			c.Mihomo.RedirPort, c.Mihomo.TProxyPort = 0, 0
+			c.Mihomo.ExternalController = controller
+			c.ProxyMode, c.System.SystemProxy = "rule", false
+			normalizeProfilePool(c)
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("迁移精简 Manager 配置失败: %w", err)
+		}
+		cfg = &committed
+	}
 	Infof("守护进程启动，配置目录: %s", configDir)
 
 	// 将 LoadConfig 完成的历史订阅池迁移原子写回，保证下一次启动无需再次迁移。
@@ -92,18 +116,30 @@ func (d *Daemon) Run() error {
 
 	// 初始化 mihomo 进程管理器
 	d.mihomoProcess = NewMihomoProcess()
+	d.ensureCoreController()
 	MigrateLegacyMihomoBinary()
-	d.backfillSubscriptionMetadataFromCaches()
-	d.startSubscriptionScheduler()
 	// systemd 只负责拉起管理守护进程；用户启用 AutoStart 后，由 daemon
 	// 恢复其管理的 mihomo 子进程。启动失败不应拖垮 IPC 服务，否则用户
 	// 无法进入 TUI 修复配置或端口冲突。
-	if cfg.System.AutoStart {
+	if cfg.System.AutoStart && os.Getenv("MIHOMO_TUI_CORE_SERVICE") == "" {
 		if err := d.mihomoProcess.Start(); err != nil {
 			Warnf("mihomo 自动启动失败，守护进程继续运行以便修复: %v", err)
 		} else {
 			Infof("mihomo 已按 auto_start 配置自动启动")
 		}
+	}
+	d.logRecorder = NewManagedLogRecorder(cfg.LogDir, func() (*MihomoAPI, error) {
+		d.mu.RLock()
+		api := d.mihomoAPI
+		d.mu.RUnlock()
+		if api == nil {
+			return nil, fmt.Errorf("mihomo API 未初始化")
+		}
+		return api, nil
+	})
+	if err := d.logRecorder.Apply(cfg.ManagedLogging); err != nil {
+		Warnf("恢复磁盘日志记录失败，保持关闭: %v", err)
+		_, _ = UpdateGlobalConfig(func(c *Config) error { c.ManagedLogging.Enabled = false; return nil })
 	}
 
 	// 初始化 IPC 授权器，并以最小权限创建 socket 目录。root daemon 只允许
@@ -114,6 +150,9 @@ func (d *Daemon) Run() error {
 	}
 	sock := daemonSocketPath()
 	sockDir := filepath.Dir(sock)
+	if socketDirectoryIsUnsafe(sockDir) {
+		return fmt.Errorf("拒绝在共享目录 %s 中直接创建 IPC socket；请使用专用子目录", sockDir)
+	}
 	if err := os.MkdirAll(sockDir, 0750); err != nil {
 		return fmt.Errorf("创建 socket 目录失败: %w", err)
 	}
@@ -155,10 +194,56 @@ func (d *Daemon) Run() error {
 	return d.server.Serve(listener)
 }
 
+func socketDirectoryIsUnsafe(dir string) bool {
+	dir = filepath.Clean(dir)
+	for _, shared := range []string{"/", "/tmp", "/run", "/var/run", filepath.Clean(os.TempDir())} {
+		if dir == shared {
+			return true
+		}
+	}
+	return false
+}
+
+// managerRuntimeNetwork keeps the controller fixed and uses the persisted
+// managed mixed port in production. Explicit shadow mode remains isolated from
+// production configuration so upgrades cannot touch live listeners.
+func managerRuntimeNetwork() (int, string, error) {
+	if os.Getenv("MIHOMO_TUI_SHADOW") != "1" {
+		mixedPort := GlobalConfig().Mihomo.MixedPort
+		if mixedPort == 0 {
+			mixedPort = 7890
+		}
+		if mixedPort < 1 || mixedPort > 65535 || mixedPort == 9090 {
+			return 0, "", fmt.Errorf("受管 mixed 端口必须在 1-65535 之间且不能是控制端口 9090")
+		}
+		return mixedPort, "127.0.0.1:9090", nil
+	}
+	mixedPort, controllerPort := 17890, 19090
+	for name, target := range map[string]*int{
+		"MIHOMO_TUI_SHADOW_MIXED_PORT":      &mixedPort,
+		"MIHOMO_TUI_SHADOW_CONTROLLER_PORT": &controllerPort,
+	} {
+		if raw := strings.TrimSpace(os.Getenv(name)); raw != "" {
+			value, err := strconv.Atoi(raw)
+			if err != nil || value < 1 || value > 65535 {
+				return 0, "", fmt.Errorf("%s 必须是 1-65535 的端口", name)
+			}
+			*target = value
+		}
+	}
+	if mixedPort == controllerPort {
+		return 0, "", fmt.Errorf("影子 mixed 与 controller 端口不能相同")
+	}
+	return mixedPort, net.JoinHostPort("127.0.0.1", strconv.Itoa(controllerPort)), nil
+}
+
 // Stop 停止守护进程
 func (d *Daemon) Stop() error {
 	if d.subscriptionSchedulerCancel != nil {
 		d.subscriptionSchedulerCancel()
+	}
+	if d.logRecorder != nil {
+		d.logRecorder.Close()
 	}
 	if d.server != nil {
 		return d.server.Shutdown(context.Background())
@@ -170,36 +255,21 @@ func (d *Daemon) Stop() error {
 func (d *Daemon) router() http.Handler {
 	mux := http.NewServeMux()
 
-	// 配置
-	mux.HandleFunc("/api/v1/config", d.handleConfig)
-
-	// 订阅
-	mux.HandleFunc("/api/v1/subscriptions", d.handleSubscriptions)
-	mux.HandleFunc("/api/v1/subscriptions/", d.handleSubscriptionDetail)
-	mux.HandleFunc("/api/v1/subscription-pools", d.handleSubscriptionPools)
-	mux.HandleFunc("/api/v1/subscription-pools/", d.handleSubscriptionPoolDetail)
-
-	// 规则订阅
-	mux.HandleFunc("/api/v1/rule-providers", d.handleRuleProviders)
-	mux.HandleFunc("/api/v1/rule-providers/", d.handleRuleProviderDetail)
-
-	// mihomo 管理
-	mux.HandleFunc("/api/v1/mihomo/status", d.handleMihomoStatus)
-	mux.HandleFunc("/api/v1/mihomo/api-credentials", d.handleMihomoAPICredentials)
-	mux.HandleFunc("/api/v1/mihomo/start", d.handleMihomoStart)
-	mux.HandleFunc("/api/v1/mihomo/stop", d.handleMihomoStop)
-	mux.HandleFunc("/api/v1/mihomo/restart", d.handleMihomoRestart)
-	mux.HandleFunc("/api/v1/mihomo/versions", d.handleMihomoVersions)
-	mux.HandleFunc("/api/v1/mihomo/versions/refresh", d.handleMihomoVersionsRefresh)
-	mux.HandleFunc("/api/v1/mihomo/versions/manual-import", d.handleManualMihomoImport)
-	mux.HandleFunc("/api/v1/mihomo/versions/", d.handleMihomoVersionDetail)
-	mux.HandleFunc("/api/v1/mihomo/upgrade", d.handleMihomoUpgrade)
-	mux.HandleFunc("/api/v1/mihomo/upgrade/progress", d.handleMihomoUpgradeProgress)
-	mux.HandleFunc("/api/v1/mihomo/version", d.handleMihomoVersion)
-	mux.HandleFunc("/api/v1/mihomo/latest-version", d.handleMihomoLatestVersion)
-	mux.HandleFunc("/api/v1/mihomo/external-resources", d.handleExternalResources)
-	mux.HandleFunc("/api/v1/mihomo/external-resources/download", d.handleDownloadExternalResources)
-	mux.HandleFunc("/api/v1/mihomo/external-resources/", d.handleExternalResourceDetail)
+	// 精简 Manager v1：TUI 只调用这些权威接口，不直接连接 mihomo。
+	mux.HandleFunc("/v1/status", d.handleManagerStatus)
+	mux.HandleFunc("/v1/core/start", d.handleManagerCoreStart)
+	mux.HandleFunc("/v1/core/stop", d.handleManagerCoreStop)
+	mux.HandleFunc("/v1/tun", d.handleManagerTUN)
+	mux.HandleFunc("/v1/proxy-port", d.handleManagerProxyPort)
+	mux.HandleFunc("/v1/profiles", d.handleProfiles)
+	mux.HandleFunc("/v1/profiles/", d.handleProfileDetail)
+	mux.HandleFunc("/v1/proxy-groups", d.handleManagerProxyGroups)
+	mux.HandleFunc("/v1/proxy-groups/", d.handleManagerProxyGroupDetail)
+	mux.HandleFunc("/v1/proxy-delay", d.handleManagerProxyDelay)
+	mux.HandleFunc("/v1/rules", d.handleManagerRules)
+	mux.HandleFunc("/v1/logs/stream", d.handleManagerLogStream)
+	mux.HandleFunc("/v1/logging/status", d.handleManagerLoggingStatus)
+	mux.HandleFunc("/v1/logging", d.handleManagerLogging)
 
 	// 心跳
 	mux.HandleFunc("/api/v1/ping", d.handlePing)
@@ -207,7 +277,6 @@ func (d *Daemon) router() http.Handler {
 	// 守护进程信息
 	mux.HandleFunc("/api/v1/daemon/info", d.handleDaemonInfo)
 	mux.HandleFunc("/api/v1/daemon/config-dir", d.handleDaemonConfigDir)
-	mux.HandleFunc("/api/v1/daemon/shutdown", d.handleDaemonShutdown)
 
 	return mux
 }

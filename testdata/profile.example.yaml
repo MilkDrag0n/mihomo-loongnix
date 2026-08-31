@@ -1,0 +1,7 @@
+# Non-routable example used by parser and shadow-deployment checks.
+proxies:
+  - name: shadow-example
+    type: socks5
+    server: 192.0.2.1
+    port: 1080
+    udp: false

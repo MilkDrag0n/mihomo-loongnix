@@ -15,7 +15,8 @@ import (
 const (
 	// ipcAccessGroup 的成员只能调用不含凭据的状态查询 API。
 	ipcAccessGroup = "mihomo-tui"
-	// ipcOperatorGroup 的成员可管理订阅和规则订阅，但不能执行 root 系统操作。
+	// ipcOperatorGroup 的成员通过 manager 的受限接口执行日常管理操作；
+	// 原始 root 管理接口和安装/卸载仍不可访问。
 	ipcOperatorGroup = "mihomo-tui-operator"
 )
 
@@ -200,7 +201,7 @@ func isIPCReadOnlyRequest(r *http.Request) bool {
 	// 只读组只可查看不含订阅 URL、配置路径或凭据的运行状态。
 	// 配置、订阅列表、规则订阅和 API 凭据都必须由 operator/root 身份访问。
 	switch path.Clean(r.URL.Path) {
-	case "/api/v1/ping", "/api/v1/daemon/info", "/api/v1/mihomo/status", "/api/v1/mihomo/version", "/api/v1/mihomo/latest-version", "/api/v1/mihomo/upgrade/progress", "/api/v1/mihomo/versions":
+	case "/api/v1/ping", "/api/v1/daemon/info", "/api/v1/mihomo/status", "/api/v1/mihomo/version", "/api/v1/mihomo/latest-version", "/api/v1/mihomo/upgrade/progress", "/api/v1/mihomo/versions", "/v1/status", "/v1/logging/status":
 		return true
 	default:
 		return false

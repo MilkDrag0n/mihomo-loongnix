@@ -1,25 +1,44 @@
 package cmd
 
-// ServiceUnitTemplate systemd 服务文件模板
-// 占位符: {{.ExecPath}} — 可执行文件路径, {{.User}} — 运行用户
-const ServiceUnitTemplate = `[Unit]
-Description=mihomo-tui daemon
+const ManagerServiceUnitTemplate = `[Unit]
+Description=mihomo local manager API
 After=network.target
 
 [Service]
 Type=simple
-User={{.User}}
-UMask=0077
+User=root
+UMask=0027
 RuntimeDirectory=mihomo-tui
 RuntimeDirectoryMode=0750
-# root daemon 会将 socket 设为 root:mihomo-tui 0660；mihomo-tui 为只读组，mihomo-tui-operator 可管理订阅。
-ExecStart={{.ExecPath}} server
-ExecStop={{.ExecPath}} cleanup
+Environment=MIHOMO_TUI_CORE_SERVICE=mihomo.service
+ExecStart={{.ManagerPath}} server -d {{.StateDir}}
 Restart=on-failure
-RestartSec=5
+RestartSec=3
 StandardOutput=journal
 StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 `
+
+const CoreServiceUnitTemplate = `[Unit]
+Description=mihomo proxy core
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+ExecStart={{.CorePath}} -d {{.StateDir}} -f {{.ConfigPath}}
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+`
+
+// ServiceUnitTemplate remains as an alias for downstream source compatibility.
+const ServiceUnitTemplate = ManagerServiceUnitTemplate

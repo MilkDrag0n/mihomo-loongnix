@@ -83,7 +83,7 @@ func TestUpdateGlobalConfigValidationFailureKeepsState(t *testing.T) {
 		t.Fatalf("UpdateGlobalConfig() error = %v, want 端口冲突", err)
 	}
 	cfg := GlobalConfig()
-	if cfg.Mihomo.HTTPPort != 7890 || cfg.Mihomo.MixedPort != 7892 || cfg.Version != 0 {
+	if cfg.Mihomo.HTTPPort != 0 || cfg.Mihomo.MixedPort != 7890 || cfg.Version != 0 {
 		t.Fatalf("memory changed after validation failure: %+v", cfg.Mihomo)
 	}
 }
