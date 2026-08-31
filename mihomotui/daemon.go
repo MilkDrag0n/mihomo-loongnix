@@ -95,6 +95,16 @@ func (d *Daemon) Run() error {
 	MigrateLegacyMihomoBinary()
 	d.backfillSubscriptionMetadataFromCaches()
 	d.startSubscriptionScheduler()
+	// systemd 只负责拉起管理守护进程；用户启用 AutoStart 后，由 daemon
+	// 恢复其管理的 mihomo 子进程。启动失败不应拖垮 IPC 服务，否则用户
+	// 无法进入 TUI 修复配置或端口冲突。
+	if cfg.System.AutoStart {
+		if err := d.mihomoProcess.Start(); err != nil {
+			Warnf("mihomo 自动启动失败，守护进程继续运行以便修复: %v", err)
+		} else {
+			Infof("mihomo 已按 auto_start 配置自动启动")
+		}
+	}
 
 	// 初始化 IPC 授权器，并以最小权限创建 socket 目录。root daemon 只允许
 	// mihomo-tui 组成员通过 socket 访问；普通 daemon 则只允许启动它的用户访问。
