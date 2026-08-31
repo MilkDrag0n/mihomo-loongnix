@@ -2,6 +2,8 @@
 
 > Loongnix fork：当前分支增加 LoongArch ABI2 (`linux/loong64`) 构建、运行配置与敏感信息物理拆分。适配说明见 [docs/LOONGNIX.md](docs/LOONGNIX.md)。
 
+当前功能边界、权限要求、已知限制和回归用例见 [docs/TEST_REFERENCE.zh-CN.md](docs/TEST_REFERENCE.zh-CN.md)。
+
 mihomo-tui 是 [mihomo](https://github.com/MetaCubeX/mihomo)（Clash Meta）的终端 UI 与守护进程管理工具。基于 [rivo/tview](https://github.com/rivo/tview) 开发，面向 Linux 无桌面服务器环境：TUI 通过 IPC 连接守护进程，安全管理 mihomo 进程、订阅、规则、内核版本与网络能力。
 
 [English README](README.md)
