@@ -36,8 +36,9 @@ func newNodesPage(app *tview.Application, client *mihomotui.IPCClient, overlay *
 	prevButton := newActionButton(" 上一页 ")
 	nextButton := newActionButton(" 下一页 ")
 	selectButton := newActionButton(" 使用所选节点 ")
-	pageInfo := tview.NewTextView().SetTextAlign(tview.AlignCenter).SetDynamicColors(true)
-	bottom := tview.NewFlex().AddItem(prevButton, 10, 0, true).AddItem(pageInfo, 18, 0, false).AddItem(nextButton, 10, 0, false).AddItem(selectButton, 18, 0, false)
+	pageInfo := tview.NewTextView().SetTextAlign(tview.AlignCenter).SetDynamicColors(true).SetWrap(false)
+	pageInfo.SetBorderPadding(1, 1, 1, 1)
+	bottom := tview.NewFlex().AddItem(prevButton, 10, 0, true).AddItem(pageInfo, 32, 0, false).AddItem(nextButton, 10, 0, false).AddItem(selectButton, 18, 0, false)
 	message := tview.NewTextView().SetDynamicColors(true)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(toolbar, 3, 0, true).AddItem(table, 0, 1, false).AddItem(message, 2, 0, false).AddItem(bottom, 3, 0, false)
 
