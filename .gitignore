@@ -47,3 +47,7 @@
 # Local security scanner output
 /.security/
 gitleaks-report.*
+
+# Python deployment-tool bytecode
+__pycache__/
+*.pyc

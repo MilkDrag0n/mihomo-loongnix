@@ -70,6 +70,8 @@
 ## 部署与回滚
 
 - 正式服务为 `mihomo-manager.service` 和 `mihomo.service`，不是旧的一体式 `mihomo-tui.service`。
+- 已有部署统一使用版本控制中的 `scripts/deploy.py <目标提交> --check` 和 `sudo python3 scripts/deploy.py <目标提交>`，不再生成写死版本的一次性部署脚本。脚本适用条件与故障恢复见 `docs/LOONGNIX.md`。
+- 修改部署工具后运行 `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -v`；模拟测试与 `--check` 不能替代真实 root 部署验收，普通修改不要重启正式服务。
 - 部署前备份正式程序、实际使用的内核、unit 文件及完整 `/var/lib/mihomo-tui`，同时记录服务启用和运行状态。root 私有文件无法读取时，明确指出备份覆盖范围，不能宣称已完整备份或继续部署。
 - 安装器仍存在“先停止服务、后检查内核”的失败恢复缺口；升级前先验证所有依赖和路径，准备回滚命令。
 - 回滚恢复本次部署前保存的二进制、数据及双服务配置，恢复记录中的启用和运行状态。不要照搬启动旧 `mihomo-tui.service` 的命令。

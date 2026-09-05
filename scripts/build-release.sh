@@ -23,6 +23,7 @@ if [ -e "$destination" ]; then
 fi
 
 ./scripts/check-secrets.sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests
 go test -count=1 ./...
 go vet ./...
 temporary=$(mktemp -d "$artifact_root/.build-XXXXXXXX")

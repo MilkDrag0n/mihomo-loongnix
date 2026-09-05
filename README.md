@@ -27,6 +27,7 @@
 | 操作系统 | 主要面向 Loongnix GNU/Linux 25、LoongArch ABI2；机器架构通常显示为 `loongarch64` |
 | 服务管理 | systemd，用于分别管理后台服务和 Mihomo 内核 |
 | 构建工具 | Git、Go `1.26.1` 或更新版本，以 [go.mod](go.mod) 为准 |
+| 部署工具 | Python 3.8+、curl、GNU tar；Python 用于部署工具及构建前的回归测试 |
 | 内核 | 已解压、具有执行权限的 ABI2 兼容 Mihomo 程序 |
 | 终端 | 支持 UTF-8 和颜色的终端，可通过 SSH 使用 |
 | 权限 | 安装服务需要 root；日常使用由普通用户通过授权组操作 |
@@ -105,6 +106,19 @@ mihomo-tui
 
 当前推荐上述源码安装流程。仓库中保留的 `scripts/install.sh` 仍有原作者仓库地址及压缩包处理等遗留问题，暂不作为本项目的安装入口。
 
+### 已有部署升级
+
+已安装双服务时，使用仓库自带部署脚本。先提交修改并构建，再指定目标提交：
+
+```bash
+./scripts/build-release.sh
+commit=$(git rev-parse HEAD)
+python3 scripts/deploy.py "$commit" --check
+sudo python3 scripts/deploy.py "$commit"
+```
+
+已有对应构建时可直接复用。脚本会校验来源、完整备份、替换程序、重试验证，并在失败时自动回滚；相同构建不会重复部署。需要 Python 3.8+，升级前须关闭 TUN。路径、适用范围与故障恢复见 [部署说明](docs/LOONGNIX.md#正式部署)。
+
 ## 项目结构
 
 ```text
@@ -122,7 +136,7 @@ mihomo-loongnix/
 │   ├── mihomo_*.go           # 内核接口、进程与配置处理
 │   ├── ipc_*.go              # 本机通信及权限校验
 │   └── *_test.go             # 功能与回归测试
-├── scripts/                  # 构建、敏感信息检查、Git 钩子安装
+├── scripts/                  # 构建、部署与回滚、敏感信息检查、Git 钩子安装
 ├── docs/                     # 部署说明、接口及测试文档
 ├── testdata/                 # 无真实凭据的测试样例
 ├── .githooks/                # 提交前检查

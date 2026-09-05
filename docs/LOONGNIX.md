@@ -72,31 +72,68 @@ curl --unix-socket "$HOME/.local/state/mihomo-loongnix-test/run/daemon.sock" htt
 
 ## 正式部署
 
-正式服务是相互独立的 `mihomo-manager.service` 与 `mihomo.service`。文档修改、普通构建和测试不需要部署。
+首次安装仍使用 README 中的安装命令。已有双服务部署统一使用仓库里的 `scripts/deploy.py`，不再为每次升级生成写死版本的脚本。部署工具使用 Python 3.8+ 标准库，另需 Go（读取实际二进制构建信息）、curl、GNU tar（支持 ACL 与扩展属性）和 systemd。
 
-需要部署时，先确认用户授权，检查内核能执行、路径有效，并记录以下信息到仓库外的私有备份目录：
+### 日常升级流程
 
-- 当前两项服务的运行状态、开机启用状态、实际启动命令。
-- 当前 TUI 与内核二进制、SHA-256、内核版本。
-- 两份 systemd unit 文件和完整 `/var/lib/mihomo-tui` 状态数据。
-- 待部署源码提交号、构建目录及 `SHA256SUMS`。
-
-备份目录权限设为 `0700`。运行数据含订阅和密钥，需要 root 权限才能完整备份；无权读取时不要声称已有完整部署备份。为保证一致性，状态快照应在受控维护窗口完成，或使用文件系统快照。
-
-核对 `BUILD-INFO.txt` 中的提交号及 `vcs.modified=false`，校验构建文件后，再从对应产物执行：
+先在普通用户下完成修改、测试与提交，然后构建：
 
 ```bash
-sudo /absolute/path/to/build/mihomo-tui-linux-loong64 install_service
-systemctl status mihomo-manager.service mihomo.service
+cd "$HOME/projects/mihomo-loongnix"
+./scripts/build-release.sh
+commit=$(git rev-parse HEAD)
+python3 scripts/deploy.py "$commit" --check
+sudo python3 scripts/deploy.py "$commit"
 ```
 
-上述路径必须替换为已经验证的构建文件。安装器目前在完成所有检查前可能停止管理服务，失败后不一定自动恢复；执行前必须准备好回滚资料。
+已有该提交的构建时，直接复用，不重复运行构建脚本。部署接受完整提交号或至少 7 位的唯一缩写，例如 `133d11e`；缩写匹配多个构建时会拒绝，要求使用完整提交号。`--check` 只检查，不停止服务、不写正式配置，也不代表已经完成 root 私有数据备份。正式部署需要一次 `sudo`。
 
-部署后验证管理器接口、内核状态、原端口上的代理连通性与日志。首次安装未导入配置时，内核保持停止是正常状态；升级则应与部署前记录的状态比较。记录部署日期、提交号、二进制校验值与验证结果，不能仅记录产品版本号。
+默认读取调用用户的 `~/.local/share/mihomo-loongnix/builds/<提交号>/`，即使通过 `sudo` 执行，也通过 `SUDO_USER` 找到原用户目录。若构建时设置了自定义 `XDG_DATA_HOME`，显式指定对应根目录：
+
+```bash
+sudo python3 scripts/deploy.py "$commit" --build-root /absolute/path/to/builds
+```
+
+备份默认放在调用用户的 `~/backups/mihomo-loongnix/`，可用 `--backup-root /absolute/path/to/backups` 更改；不能放进源码或正式数据目录。每次升级生成独立的私有目录，不覆盖以前的备份。
+
+### 部署步骤与边界
+
+1. 校验构建清单和实际二进制中的提交号、目标平台、`vcs.modified=false`。只有本仓库 `build-release.sh` 生成的完整产物目录可以部署，不能直接传入单个下载文件。
+2. 检查服务启动路径、当前状态、配置、端口与代理连通性；root 部署同时核对运行进程与磁盘程序的校验值。已安装相同校验值的构建时直接退出，不重启服务。
+3. 获取部署互斥锁，避免两次升级并发修改服务；将新旧程序暂存并校验。
+4. 暂停双服务，对完整运行数据、现用 TUI、现用 Mihomo、unit 及其覆盖配置制作保留权限、ACL 与扩展属性的快照，并与源文件比较验证。
+5. 原子替换 `/usr/local/bin/mihomo-tui`，恢复管理器及内核此前的运行状态；内核原本关闭时仍保持关闭。不会更换 Mihomo 内核或重写 unit，也不会修改开机启用状态。
+6. 验证服务、控制接口、活动配置 ID、代理端口与 TUN 状态。原内核运行时，HTTP 和 SOCKS 都必须通过 HTTPS 请求验证。失败时先保存诊断，再恢复旧程序与数据并复查。
+7. 保存提交号、程序与内核校验值、前后状态、连接检查、日志及备份位置到私有目录，同时更新 `~/.local/share/mihomo-loongnix/current-deployment.json`。
+
+目前支持 LoongArch Linux 上项目的标准双服务布局：管理器位于 `/usr/local/bin/mihomo-tui`，数据位于 `/var/lib/mihomo-tui`，socket 位于 `/run/mihomo-tui/daemon.sock`。内核实际路径从 `mihomo.service` 读取。自定义启动参数、符号链接部署、管理器未运行或服务处于异常状态时会拒绝升级。
+
+TUN 必须提前在 TUI 中关闭；脚本不会自动修改路由来绕过该条件。普通代码或文档修改不代表授权部署。升级会短暂停止代理，已打开的 TUI 需要退出后重开。强制杀进程、断电、磁盘损坏等情况下不能保证自动回滚，须保留备份用于人工恢复。
+
+### 连通性检查与诊断
+
+默认检查地址为 `https://cp.cloudflare.com/generate_204`，预期返回 `204`。HTTP 和 SOCKS 分别最多尝试 3 次，失败后间隔 3 秒、6 秒；每次连接超时 8 秒、总超时 20 秒。始终校验 TLS，不能通过跳过证书验证或仅检查端口来判定成功。
+
+如果该站点在你的网络中持续不可用，可为预检查和部署指定同一个可访问的 HTTPS 地址及预期的 2xx 状态码：
+
+```bash
+python3 scripts/deploy.py "$commit" --check --probe-url https://www.gstatic.com/generate_204 --probe-status 204
+sudo python3 scripts/deploy.py "$commit" --probe-url https://www.gstatic.com/generate_204 --probe-status 204
+```
+
+备份目录中的 `proxy-checks.json` 保存成功升级的检查记录；失败时先保存 `failure.json`、`journal-failure.txt`。自动恢复失败另存 `recovery-failure.json`，不覆盖最初错误。不要把含真实节点、订阅或日志的诊断文件直接提交到 GitHub。
+
+测试命令（临时文件与模拟系统调用，不操作正式服务）：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -v
+```
 
 ## 回滚
 
-按本次部署前的记录恢复，不凭目录名选择所谓 final 或 next 版本：
+普通部署失败时脚本会自动回滚；没有经过完整验证时会明确报告失败，不会声称恢复成功。失败现场保存在 `/var/lib/mihomo-tui.failed-<本次备份目录名>`，具体位置记录于备份目录的 `failed-state-location.txt`，避免删除新版本写入的数据。
+
+需要人工回滚时，先核对本次备份的 `SHA256SUMS`。`before-deploy.tar` 包含带属主、权限、ACL 和扩展属性的完整快照；`old-program` 是旧 TUI 副本，`services-before.json` 记录原服务状态。按照记录恢复，不凭目录名选择所谓 final 或 next 版本：
 
 1. 停止新版本的管理器和内核，将失败现场另存到私有目录。
 2. 从已校验备份恢复 TUI、实际使用的内核、两份 unit 和运行数据，保留原有属主与权限。
