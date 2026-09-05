@@ -35,7 +35,7 @@ func newRulesPage(app *tview.Application, client *mihomotui.IPCClient, overlay *
 	nextButton := newActionButton(" 下一页 ")
 	pageInfo := tview.NewTextView().SetTextAlign(tview.AlignCenter).SetWrap(false)
 	pageInfo.SetBorderPadding(1, 1, 1, 1)
-	bottom := tview.NewFlex().AddItem(prevButton, 10, 0, true).AddItem(pageInfo, 32, 0, false).AddItem(nextButton, 10, 0, false)
+	bottom := tview.NewFlex().AddItem(prevButton, 10, 0, true).AddItem(pageInfo, 26, 0, false).AddItem(nextButton, 10, 0, false)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(toolbar, 3, 0, true).AddItem(table, 0, 1, false).AddItem(bottom, 3, 0, false)
 	var mu sync.Mutex
 	var all []mihomotui.Rule
