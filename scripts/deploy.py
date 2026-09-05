@@ -149,6 +149,17 @@ def comparable_status(value):
                   ['configured', 'enabled', 'runtime_enabled', 'interface_present']))
 
 
+def exec_start_config(value):
+    # systemctl 的 ExecStart 同时包含配置与运行记录。重启会改变时间、
+    # PID 和退出状态，比较这些字段会把正常升级和正常回滚都误判为失败。
+    match = re.fullmatch(
+        r'\{\s*path=(.*?)\s*;\s*argv\[\]=(.*?)\s*;\s*ignore_errors=(yes|no)\s*(?:;.*)?\}',
+        value.strip(), re.S)
+    if not match:
+        raise RuntimeError('无法解析 ExecStart 的启动配置，需核对 systemd 输出')
+    return tuple(part.strip() for part in match.groups())
+
+
 def validate(before, original_states, args, events):
     want_running = original_states[CORE]['ActiveState'] == 'active'
     last = None
@@ -164,9 +175,11 @@ def validate(before, original_states, args, events):
         raise RuntimeError('管理器或内核未恢复到升级前状态') from last
     current = services()
     for unit in [MANAGER, CORE]:
-        for key in ['ActiveState', 'UnitFileState', 'ExecStart', 'FragmentPath', 'DropInPaths']:
+        for key in ['ActiveState', 'UnitFileState', 'FragmentPath', 'DropInPaths']:
             if current[unit][key] != original_states[unit][key]:
                 raise RuntimeError(f'{unit} 的 {key} 与升级前不一致')
+        if exec_start_config(current[unit]['ExecStart']) != exec_start_config(original_states[unit]['ExecStart']):
+            raise RuntimeError(f'{unit} 的启动命令与升级前不一致')
     if comparable_status(now) != comparable_status(before):
         raise RuntimeError('配置、端口或 TUN 状态与升级前不一致')
     if want_running:
@@ -276,7 +289,7 @@ def deploy(build, expected, before, states, core, files, args, caller, events):
             Path(name).unlink(missing_ok=True)
     except BaseException as exc:
         diagnostics(backup, exc, events)
-        print(f'升级未完成，恢复备份：{backup}', file=sys.stderr, flush=True)
+        print(f'升级未完成：{exc}\n恢复备份：{backup}', file=sys.stderr, flush=True)
         if stopped:
             try:
                 rollback(backup, archive, installed, states)
@@ -285,7 +298,7 @@ def deploy(build, expected, before, states, core, files, args, caller, events):
                 validate(before, states, args, events)
                 print('原程序、服务状态与连通性已验证恢复。', file=sys.stderr)
             except BaseException as recovery_error:
-                print(f'自动恢复未验证成功，请依据备份人工恢复：{backup}', file=sys.stderr)
+                print(f'自动恢复未验证成功：{recovery_error}\n请依据备份人工恢复：{backup}', file=sys.stderr)
                 diagnostics(backup, recovery_error, events, name='recovery-failure')
                 raise RuntimeError('升级失败且自动恢复未验证成功') from recovery_error
         raise

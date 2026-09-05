@@ -228,5 +228,54 @@ class ExecutionTests(unittest.TestCase):
                 deploy.parse_args(args)
 
 
+class ValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.before = {'core': {'running': True, 'service_active': True},
+                       'proxy_port': 17890, 'active_profile': {'id': 'demo'}, 'tun': {}}
+        self.original = {}
+        for unit, binary, argv in [
+                (deploy.MANAGER, '/usr/local/bin/mihomo-tui', '/usr/local/bin/mihomo-tui server -d /var/lib/mihomo-tui'),
+                (deploy.CORE, '/usr/local/bin/mihomo', '/usr/local/bin/mihomo -d /var/lib/mihomo-tui -f /var/lib/mihomo-tui/mihomo/config.yaml')]:
+            self.original[unit] = {
+                'ActiveState': 'active', 'UnitFileState': 'enabled',
+                'FragmentPath': '/etc/systemd/system/'+unit, 'DropInPaths': '',
+                'ExecStart': '{ path='+binary+' ; argv[]='+argv+' ; ignore_errors=no ; '
+                             'start_time=[n/a] ; stop_time=[n/a] ; pid=817 ; code=(null) ; status=0/0 }'}
+        self.current = {unit: dict(state) for unit, state in self.original.items()}
+
+    def validate(self):
+        with patch.object(deploy, 'status', return_value=self.before), \
+                patch.object(deploy, 'services', return_value=self.current), \
+                patch.object(deploy, 'probe') as probe:
+            result = deploy.validate(self.before, self.original, None, [])
+        probe.assert_called_once()
+        return result
+
+    def test_restart_runtime_metadata_may_change(self):
+        for state in self.current.values():
+            state['ExecStart'] = state['ExecStart'].replace('start_time=[n/a]', 'start_time=[Sat 2026-09-05 19:56:05 CST]').replace('stop_time=[n/a]', 'stop_time=[Sat 2026-09-05 19:55:59 CST]').replace('pid=817', 'pid=220276').replace('code=(null) ; status=0/0', 'code=exited ; status=0/SUCCESS')
+        self.assertEqual(self.validate(), self.before)
+
+    def test_actual_command_changes_are_still_rejected(self):
+        original = self.current[deploy.MANAGER]['ExecStart']
+        for value in [original.replace('path=/usr/local/bin/mihomo-tui', 'path=/tmp/other'),
+                      original.replace('server -d /var/lib/mihomo-tui', 'server -d /tmp/other'),
+                      original.replace('ignore_errors=no', 'ignore_errors=yes'), 'unrecognized format']:
+            with self.subTest(value=value):
+                self.current[deploy.MANAGER]['ExecStart'] = value
+                with self.assertRaises(RuntimeError):
+                    self.validate()
+
+    def test_service_state_and_unit_changes_are_still_rejected(self):
+        for key, value in [('ActiveState', 'inactive'), ('UnitFileState', 'disabled'),
+                           ('FragmentPath', '/tmp/other.service'), ('DropInPaths', '/tmp/override.conf')]:
+            with self.subTest(key=key):
+                saved = self.current[deploy.MANAGER][key]
+                self.current[deploy.MANAGER][key] = value
+                with self.assertRaises(RuntimeError):
+                    self.validate()
+                self.current[deploy.MANAGER][key] = saved
+
+
 if __name__ == '__main__':
     unittest.main()
