@@ -338,8 +338,10 @@ func TestIPCHTTPForbiddenIsClassifiedAsPermissionError(t *testing.T) {
 
 func TestPrivateIPCSocketPermissionsAndRootFailClosed(t *testing.T) {
 	dir, err := os.MkdirTemp("/tmp", "mihomo-ipc-test-")
-	if err != nil { t.Fatal(err) }
-	t.Cleanup(func(){ _ = os.RemoveAll(dir) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "daemon.sock")
 	auth := &ipcAuthorizer{runsAsRoot: false, ownerUID: uint32(os.Geteuid())}
 	if err := auth.configureSocketDirectory(dir); err != nil {
