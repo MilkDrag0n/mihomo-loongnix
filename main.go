@@ -48,6 +48,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  mihomo-tui cleanup             清理 TUN 与旧版遗留代理环境（需 root）")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui tun_diagnose        输出 TUN 路由 dry-run 计划（不修改系统）")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui tun_debug [--apply] 输出 TUN 预检；--apply 时重建修复并输出日志（需 root）")
+		fmt.Fprintln(os.Stderr, "  mihomo-tui web status|start|stop 查询、开启或关闭可选网页")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui version             显示版本信息")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "选项:")
@@ -65,6 +66,11 @@ func main() {
 
 	// 子命令分发
 	switch args[0] {
+	case "web":
+		if err := cmd.RunWeb(args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "server":
 		cmd.RunServer(args[1:], *dir)
 	case "install_service":

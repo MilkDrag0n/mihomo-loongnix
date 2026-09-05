@@ -28,14 +28,79 @@ func newHomePage(app *tview.Application, client *mihomotui.IPCClient, overlay *t
 	coreButton := newActionButton(" 启动代理 ")
 	tunButton := newActionButton(" 开启 TUN ")
 	refreshButton := newActionButton(" 刷新 ")
+	webButton := newActionButton(" Web 状态 ")
+	webInfo := tview.NewTextView().SetDynamicColors(true).SetWrap(false)
+	webInfo.SetBorderPadding(0, 0, 1, 0)
+	var webPending bool
+	var webLast *mihomotui.WebStatus
+	var webMu sync.Mutex
+	webRun := func(action string) {
+		webMu.Lock()
+		if webPending {
+			webMu.Unlock()
+			return
+		}
+		webPending = true
+		webMu.Unlock()
+		go func() {
+			result, err := client.ManagerWeb(action)
+			if action != "status" && err != nil {
+				result, _ = client.ManagerWeb("status")
+			}
+			webMu.Lock()
+			webLast = result
+			webPending = false
+			webMu.Unlock()
+			app.QueueUpdateDraw(func() {
+				if result == nil {
+					webButton.SetLabel(" Web 状态 ")
+					webInfo.SetText("网页状态不可用／当前后端不支持")
+					return
+				}
+				label, text := " 开启 Web ", "网页已关闭"
+				switch result.State {
+				case "not_installed":
+					label, text = " Web 未安装 ", "可选组件未安装"
+				case "running":
+					label, text = " 关闭 Web ", "网页运行中  "+result.PublicURL
+				case "starting", "stopping":
+					label, text = " Web 状态 ", "网页服务正在切换"
+				case "failed", "unknown":
+					label, text = " Web 状态 ", "网页状态异常"
+				}
+				if result.ServiceActive && !result.Running {
+					label = " 关闭 Web "
+				}
+				if err != nil && action != "status" {
+					text = "操作未确认，请刷新状态"
+				}
+				webButton.SetLabel(label)
+				webInfo.SetText(tview.Escape(text))
+			})
+		}()
+	}
+	webButton.SetSelectedFunc(func() {
+		webMu.Lock()
+		snapshot := webLast
+		webMu.Unlock()
+		action := "status"
+		if snapshot != nil && snapshot.Installed {
+			if snapshot.ServiceActive {
+				action = "stop"
+			} else if snapshot.State == "stopped" || snapshot.State == "failed" {
+				action = "start"
+			}
+		}
+		webRun(action)
+	})
 	bar := tview.NewFlex().
 		AddItem(portInput, 15, 0, false).
 		AddItem(applyPortButton, 12, 0, false).
 		AddItem(coreButton, 12, 0, true).
 		AddItem(tunButton, 12, 0, false).
-		AddItem(refreshButton, 8, 0, false)
+		AddItem(refreshButton, 8, 0, false).AddItem(webButton, 12, 0, false)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(summary, 14, 0, false).AddItem(bar, 3, 0, true).
+		AddItem(summary, 13, 0, false).AddItem(webInfo, 1, 0, false).AddItem(bar, 3, 0, true).
 		AddItem(message, 1, 0, false).AddItem(nil, 0, 1, false)
 
 	var mu sync.RWMutex
@@ -61,6 +126,7 @@ func newHomePage(app *tview.Application, client *mihomotui.IPCClient, overlay *t
 		}
 	}
 	refresh := func() {
+		webRun("status")
 		go func() {
 			status, err := client.ManagerStatus()
 			if err != nil {
@@ -137,7 +203,7 @@ func newHomePage(app *tview.Application, client *mihomotui.IPCClient, overlay *t
 		})
 	})
 	refreshButton.SetSelectedFunc(refresh)
-	return &pageView{Primitive: root, focusables: []tview.Primitive{portInput, applyPortButton, coreButton, tunButton, refreshButton}, first: coreButton, refresh: refresh}
+	return &pageView{Primitive: root, focusables: []tview.Primitive{portInput, applyPortButton, coreButton, tunButton, refreshButton, webButton}, first: coreButton, refresh: refresh}
 }
 
 func newHomeSummary() (*tview.Flex, func(mihomotui.ManagerStatus)) {
@@ -150,7 +216,7 @@ func newHomeSummary() (*tview.Flex, func(mihomotui.ManagerStatus)) {
 	top := tview.NewFlex().AddItem(core, 0, 1, false).AddItem(nil, 1, 0, false).AddItem(tun, 0, 1, false)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(top, 6, 0, false).AddItem(nil, 1, 0, false).
-		AddItem(connection, 6, 0, false).AddItem(nil, 1, 0, false)
+		AddItem(connection, 6, 0, false)
 	return root, func(status mihomotui.ManagerStatus) {
 		coreText, tunText, connectionText := homeStatusText(status)
 		core.SetText(coreText)

@@ -94,3 +94,11 @@
 - 管理逻辑放在后端，TUI 和未来网页只负责交互，不各自实现一套内核、配置或路由控制。
 - 修改路由、权限、请求字段、返回结构、错误码或日志格式时，同步更新 `docs/MANAGER_API.zh-CN.md`；网页接入边界变化时同步更新 `docs/WEB_INTEGRATION.zh-CN.md`。
 - 文档以已注册路由和实际处理器为准，区分当前行为与未来设计。不把未注册的旧处理函数、未实现的网页能力或未经验证的回滚保证写成现有功能。
+
+## 可选 Web 组件
+
+- 网页与现有 TUI／管理器生命周期分开；开关调用 /v1/web/*，不在 TUI 或网关内直接控制核心。
+- Web 代码在 web/、internal/webgateway/、cmd/mihomo-web/。使用 scripts/test-web.sh 独立验证，scripts/build-web.sh 从干净提交归档到 builds/web/<提交>/，scripts/deploy-web.py 独立发布。
+- 前端测试不依赖正式服务；preview-web.py 只使用假 Unix socket、测试配置和 19080 端口。TUI 普通测试不得缺省控制生产 Web unit。
+- 正式 Web 初装默认关闭、不设自启。变更 Web 不停代理双服务；所需 manager 升级仍单独使用原部署流程。
+- 发布前同步 docs/WEB_API.zh-CN.md、docs/MANAGER_API.zh-CN.md 和 docs/WEB_INTEGRATION.zh-CN.md，记录两端实际兼容提交、测试与真实部署验收边界。

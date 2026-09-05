@@ -1,0 +1,25 @@
+[Unit]
+Description=Mihomo optional Web console
+After=network.target
+
+[Service]
+Type=simple
+User=mihomo-web
+Group=mihomo-web
+SupplementaryGroups=mihomo-tui mihomo-tui-operator
+ExecStart=/opt/mihomo-web/current/mihomo-web-linux-loong64 --config /etc/mihomo-web/config.json
+WorkingDirectory=/var/lib/mihomo-web
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=10
+TimeoutStopSec=8
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mihomo-web
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

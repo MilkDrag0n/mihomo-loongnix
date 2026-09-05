@@ -19,6 +19,8 @@ type Daemon struct {
 	mu              sync.RWMutex
 	actionMu        sync.Mutex
 	delayMu         sync.Mutex
+	webMu           sync.Mutex
+	web             webController
 	listener        net.Listener
 	server          *http.Server
 	mihomoAPI       *MihomoAPI
@@ -257,6 +259,7 @@ func (d *Daemon) router() http.Handler {
 
 	// 精简 Manager v1：TUI 只调用这些权威接口，不直接连接 mihomo。
 	mux.HandleFunc("/v1/status", d.handleManagerStatus)
+	mux.HandleFunc("/v1/web/", d.handleWeb)
 	mux.HandleFunc("/v1/core/start", d.handleManagerCoreStart)
 	mux.HandleFunc("/v1/core/stop", d.handleManagerCoreStop)
 	mux.HandleFunc("/v1/tun", d.handleManagerTUN)

@@ -29,7 +29,7 @@ curl --unix-socket /run/mihomo-tui/daemon.sock http://localhost/v1/status
 | 调用身份 | 本文 `/v1` 接口权限 |
 | --- | --- |
 | 不具备 socket 访问权限 | 连接可能直接报权限错误，尚未进入 HTTP 层 |
-| 仅属于 `mihomo-tui` 组 | 只能 `GET /v1/status` 和 `GET /v1/logging/status` |
+| 仅属于 `mihomo-tui` 组 | 只能 `GET /v1/status`、`GET /v1/logging/status` 和 `GET /v1/web/status` |
 | 同时属于 `mihomo-tui`、`mihomo-tui-operator` | 可以调用本文全部 `/v1` 接口，包括启停内核、TUN 和配置管理 |
 | root | 可以调用全部已注册接口 |
 
@@ -74,7 +74,7 @@ curl --unix-socket /run/mihomo-tui/daemon.sock http://localhost/v1/status
 
 ### 请求校验、并发和超时
 
-- 请求应显式提供本文列出的字段。当前解码器会忽略未知字段，也没有统一的请求体大小限制；网页入口需要自行限制请求大小并校验字段。
+- 请求应显式提供本文列出的字段。当前解码器会忽略未知字段，也没有统一的请求体大小限制；网页入口需要自行限制请求大小并校验字段。独立网关现已实现这些入口校验，见 [Web API](WEB_API.zh-CN.md)。
 - 特别是 `enabled`：当前缺失时会按 Go 的零值 `false` 处理，网页入口应拒绝 `{}`，避免误关功能。
 - 无分页、筛选或排序查询参数；配置、节点、规则的显示筛选和分页由客户端完成。
 - 多数状态修改共用互斥锁；节点测速使用独立锁。不要同时发起多次配置/TUN/端口变更。
@@ -107,7 +107,7 @@ curl --unix-socket /run/mihomo-tui/daemon.sock http://localhost/v1/status
 | GET | `/v1/logging/status` | 无 | `200`，LoggingStatus |
 | PUT | `/v1/logging` | `{"enabled":true}` | `200`，LoggingStatus |
 
-路径中的 `{id}`、`{group}` 是占位符。使用列表返回的原始 ID 或完整组名，并对路径参数做 URL 编码；节点名放在 JSON 请求体中，不能用界面裁剪、去旗帜后的显示名称替代。当前组名处理存在再次 URL 解码的逻辑，含字面 `%` 等特殊字符的组名需要专门联调，不能承诺任意名称都已兼容。
+路径中的 `{id}`、`{group}` 是占位符。使用列表返回的原始 ID 或完整组名，并对路径参数做 URL 编码；节点名放在 JSON 请求体中，不能用界面裁剪、去旗帜后的显示名称替代。组名仅解码一次；路径参数必须先 URL 编码，中文、斜线和字面百分号已纳入回归检查。
 
 不存在 `GET /v1/profiles/{id}` 或 `GET /v1/proxy-groups/{group}` 单项详情接口；需要从列表查找。
 
@@ -151,6 +151,10 @@ curl --unix-socket /run/mihomo-tui/daemon.sock http://localhost/v1/status
 
 | 字段 | 类型与含义 |
 | --- | --- |
+| `core.state_query_ok` | 布尔；系统服务状态查询是否成功，失败不能当成已停止 |
+| `core.service_state` | active/inactive/failed/activating/deactivating/unknown；系统状态或独立进程状态 |
+| `observed_at` | RFC3339 UTC 字符串；本次状态观测完成时间 |
+| `tun.observation_ok` | 布尔；当前服务状态所需的 TUN 观测是否成功，停机无需查询不存在的控制接口 |
 | `core.service_active` | 布尔；正式环境来自 systemd，独立测试来自受管进程状态 |
 | `core.controller_healthy` | 布尔；内核 `/version` 请求是否成功 |
 | `core.running` | 布尔；上面两个条件同时成立 |
@@ -344,7 +348,7 @@ curl --unix-socket "$manager_socket" -X POST http://localhost/v1/core/stop
 
 当前路由额外保留 `GET /api/v1/ping`、`GET /api/v1/daemon/info` 和 `GET /api/v1/daemon/config-dir`，供本机兼容和诊断使用。部分源码中仍有旧处理函数或客户端方法，但未注册到当前路由，不能据此认为接口存在。新网页优先使用本文 `/v1` 接口。
 
-安装/卸载服务、授权用户、替换内核二进制不属于本文日常管理 API。当前没有网页登录、多租户权限、浏览器 CORS 配置或远程管理监听；这些由未来总面板及其接入层实现。
+安装/卸载服务、授权用户、替换内核二进制不属于本文日常管理 API。管理器本身不提供网页登录、CORS 或远程监听；可选独立 Web 网关实现单管理员会话，详见 [网页接入](WEB_INTEGRATION.zh-CN.md)。
 
 文档核对来源：
 
@@ -356,3 +360,29 @@ curl --unix-socket "$manager_socket" -X POST http://localhost/v1/core/stop
 - [Go 客户端封装](../mihomotui/manager_client.go)
 - [节点与规则结构](../mihomotui/mihomo_api_models.go)
 - [磁盘日志实现](../mihomotui/manager_logging.go)
+
+## 10. 可选 Web 生命周期
+
+以下路由由管理器提供，即使 Web 关闭仍可调用。它们不操作核心、订阅、端口或 TUN，普通根状态查询也不等待网页健康检查。
+
+| 方法与路径 | 权限与请求 | 结果 |
+| --- | --- | --- |
+| GET /v1/web/status | socket 只读组及以上；无参数 | 200，WebStatus；组件未安装是有效状态 |
+| POST /v1/web/start | operator/root；无参数 | 200，已确认 running=true |
+| POST /v1/web/stop | operator/root；无参数 | 200，已确认服务停止 |
+
+WebStatus 示例（虚构）：
+
+```json
+{"success":true,"data":{"installed":true,"configured":true,"state":"stopped","service_active":false,"healthy":false,"running":false,"public_url":"https://mihomo.example.invalid","observed_at":"2026-09-06T00:00:00Z"}}
+```
+
+installed 表示 unit 和程序／静态产物存在；configured 表示正式私有配置有效。state 枚举 not_installed/stopped/starting/running/stopping/failed/unknown。service_active 为 systemd 实际状态，healthy 要求本机健康响应的 app 与 PID 匹配正在运行的 Web unit，running 同时要求服务活动和健康。public_url 可空，error_code/message 可选，不返回配置路径、密码哈希或令牌。生产网页配置不允许 test_mode。
+
+错误仍保留 `success=false,error`，增加可选 `error_code`。403 由 IPC 鉴权返回；409 的 code 为 WEB_NOT_INSTALLED、WEB_NOT_CONFIGURED、PORT_IN_USE、BUSY；500 为 WEB_START_FAILED/WEB_STOP_FAILED；503/WEB_STATUS_UNAVAILABLE 表示无法查询或此环境没有控制器；504/RESULT_UNKNOWN 表示超时待确认。错误后回读状态，不能断言操作未执行。
+
+仅操作固定 mihomo-web.service，请求不能指定服务、命令、健康 URL 或路径。独立 Web 锁不占用代理 actionMu，并与 Web 部署工具共享文件锁；已有操作立即返回 BUSY。正常 start/stop 重复调用幂等。启动前验证配置、产物、端口，失败只尝试停止本次启动的 Web unit；停止／清理本身失败时不保证完全恢复，保留状态待确认。
+
+查询窗口 3 秒，操作窗口 15 秒，启动失败清理额外最多 3 秒；TUI／CLI 请求窗口 20 秒。退出 TUI 不关闭 Web。首页与 `mihomo-tui web status|start|stop` 使用相同接口，均不安装组件或设自启。
+
+影子测试模式或普通用户运行的管理器未注入假控制器时，路由返回 503，绝不退回生产 systemctl。生产安装需要升级此管理器并安装可选组件；版本号不替代接口探测。旧管理器返回 404 时，新 TUI 提示不支持，其他功能继续工作。

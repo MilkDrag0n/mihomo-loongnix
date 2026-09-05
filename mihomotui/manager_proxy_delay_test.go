@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -65,5 +66,29 @@ func TestManagerProxyDelayReturnsMeasuredKernelValue(t *testing.T) {
 	}
 	if !delayRequestSeen || result.Name != "node-1" || result.Delay != 73 {
 		t.Fatalf("delay request seen=%v result=%+v", delayRequestSeen, result)
+	}
+}
+
+func TestManagerProxyGroupDecodedExactlyOnce(t *testing.T) {
+	useTestConfigDir(t)
+	group, node := "中文/100%25", "节点 / 百分号%"
+	var seen string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" {
+			seen = r.URL.Path
+			w.WriteHeader(204)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"proxies": map[string]any{group: map[string]any{"name": group, "type": "Selector", "now": node, "all": []string{node}}, node: map[string]any{"name": node, "type": "Shadowsocks"}}})
+	}))
+	defer server.Close()
+	cfg := *GlobalConfig()
+	cfg.Mihomo.ExternalController = strings.TrimPrefix(server.URL, "http://")
+	SetGlobalConfig(cfg)
+	body, _ := json.Marshal(map[string]string{"name": node})
+	w := httptest.NewRecorder()
+	(&Daemon{}).router().ServeHTTP(w, httptest.NewRequest("PUT", "/v1/proxy-groups/"+url.PathEscape(group), bytes.NewReader(body)))
+	if w.Code != 200 || seen != "/proxies/"+group {
+		t.Fatalf("%d %q %s", w.Code, seen, w.Body.String())
 	}
 }

@@ -51,3 +51,12 @@ gitleaks-report.*
 # Python deployment-tool bytecode
 __pycache__/
 *.pyc
+
+# Optional Web dependencies and generated files
+/web/node_modules/
+/web/dist/
+/web/.vite/
+/web/test-results/
+/web/playwright-report/
+/web/.env*
+!/web/.env.example

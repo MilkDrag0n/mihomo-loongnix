@@ -1,6 +1,6 @@
 # mihomo-loongnix
 
-面向 Loongnix / LoongArch ABI2 的 Mihomo 管理工具，通过终端界面管理代理内核、订阅配置、节点、规则和日志。
+面向 Loongnix / LoongArch ABI2 的 Mihomo 管理工具，通过终端界面或可选独立网页管理代理内核、订阅配置、节点、规则和日志。
 
 ![Mihomo 终端控制台首页](docs/images/tui-home.png)
 
@@ -136,6 +136,10 @@ mihomo-loongnix/
 │   ├── mihomo_*.go           # 内核接口、进程与配置处理
 │   ├── ipc_*.go              # 本机通信及权限校验
 │   └── *_test.go             # 功能与回归测试
+├── web/                      # Vue 网页、五页界面、依赖锁与组件测试
+├── internal/webgateway/      # 网页鉴权、接口映射、日志和摘要
+├── internal/webconfig/       # 可选网页私有配置
+├── deploy/web/               # 独立网页服务模板
 ├── scripts/                  # 构建、部署与回滚、敏感信息检查、Git 钩子安装
 ├── docs/                     # 部署说明、接口及测试文档
 ├── testdata/                 # 无真实凭据的测试样例
@@ -150,7 +154,7 @@ mihomo-loongnix/
 
 | 页面 | 功能 |
 | --- | --- |
-| 首页 | 查看内核、控制接口与 TUN 状态；启停内核、修改混合代理端口、开关 TUN |
+| 首页 | 查看内核、控制接口与 TUN 状态；启停内核、修改混合代理端口、开关 TUN；可选 Web 启停 |
 | 配置 | 通过链接导入配置，激活、更新、重命名和删除；应用失败时尝试回滚 |
 | 节点 | 查看代理组和当前节点，筛选节点、手动选择节点、测试节点延迟 |
 | 规则 | 分页、筛选并查看内核当前生效的规则 |
@@ -162,12 +166,17 @@ mihomo-loongnix/
 
 ## 后端与前端
 
-项目由独立的管理后端和 TUI 前端组成。未来网页前端可以通过服务器总面板的后端调用同一套管理接口，TUI 仍可继续使用。
+项目包含管理后端、TUI 和可选网页。网页采用 Vue 3 / TypeScript，通过独立 Go 网关与 TUI 共用同一个管理器；运行时不需要 Node。网页有概览、配置、节点、规则和日志五页，支持单管理员登录、深浅主题和手机布局。
 
-管理后端目前通过本机 Unix socket 提供 HTTP API，网页需要由总面板后端转接；本仓库尚未实现网页页面和网页登录。
+Web 默认关闭，独立安装、测试和升级。在 TUI 首页开启／关闭，或使用 `mihomo-tui web status|start|stop`。退出 TUI 不关闭 Web；关闭 Web 不影响代理，服务器重启后默认不开启。首次安装需要先准备 HTTPS 入口和管理员密码，不能仅运行开关命令。
 
-- [管理后端接口文档](docs/MANAGER_API.zh-CN.md)：方法、路径、权限、请求、返回字段、错误与日志流。
-- [网页接入指南](docs/WEB_INTEGRATION.zh-CN.md)：系统分层、路由映射、接入示例及待实现内容。
+网页构建与安装流程见 [网页接入指南](docs/WEB_INTEGRATION.zh-CN.md)。构建需要 Node >=22.12、pnpm 10.34.5；使用 `./scripts/test-web.sh` 独立测试、`./scripts/build-web.sh` 归档，安装／升级使用 `scripts/deploy-web.py`，不会停代理双服务。首次生产安装与回退须在实际环境验收；假数据预览不代表已部署。
+
+- [管理后端接口](docs/MANAGER_API.zh-CN.md)：供 TUI／网关使用的 /v1 与 Web 生命周期。
+- [浏览器 API](docs/WEB_API.zh-CN.md)：登录、业务映射、CSRF、错误、日志、只读摘要。
+- [网页来源清单](web/THIRD_PARTY_NOTICES.md)：Zashboard 设计参考与依赖来源。
+
+Homepage 可通过卡片跳转和独立只读令牌取摘要；无需依赖 Homepage 或 HoloBot 的运行。
 
 ## 使用方式
 

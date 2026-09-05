@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +16,8 @@ import (
 )
 
 type CoreRuntimeStatus struct {
+	StateQueryOK      bool   `json:"state_query_ok"`
+	ServiceState      string `json:"service_state"`
 	ServiceActive     bool   `json:"service_active"`
 	ControllerHealthy bool   `json:"controller_healthy"`
 	Running           bool   `json:"running"`
@@ -25,6 +26,7 @@ type CoreRuntimeStatus struct {
 }
 
 type TUNRuntimeStatus struct {
+	ObservationOK    bool   `json:"observation_ok"`
 	Configured       bool   `json:"configured"`
 	RuntimeEnabled   bool   `json:"runtime_enabled"`
 	InterfacePresent bool   `json:"interface_present"`
@@ -33,6 +35,7 @@ type TUNRuntimeStatus struct {
 }
 
 type ManagerStatus struct {
+	ObservedAt    string            `json:"observed_at"`
 	Core          CoreRuntimeStatus `json:"core"`
 	TUN           TUNRuntimeStatus  `json:"tun"`
 	ActiveProfile *ProfileSummary   `json:"active_profile,omitempty"`
@@ -66,6 +69,20 @@ func (d *Daemon) managerStatus() (ManagerStatus, error) {
 	if stateErr != nil {
 		status.Core.Detail = RedactURLInText(stateErr.Error())
 	}
+	status.Core.StateQueryOK = stateErr == nil
+	status.Core.ServiceState = "unknown"
+	if stateErr == nil {
+		switch state.Detail {
+		case "active", "inactive", "failed", "activating", "deactivating":
+			status.Core.ServiceState = state.Detail
+		default:
+			if state.Active {
+				status.Core.ServiceState = "active"
+			} else {
+				status.Core.ServiceState = "inactive"
+			}
+		}
+	}
 	cfg := GlobalConfig()
 	status.CurrentGroup = cfg.defaultProxyGroup()
 	if mixedPort, _, err := managerRuntimeNetwork(); err == nil {
@@ -77,12 +94,20 @@ func (d *Daemon) managerStatus() (ManagerStatus, error) {
 	}
 	status.TUN.Configured = cfg.System.TUN
 	status.TUN.Interface = "mihomo-tui-tun"
-	status.TUN.InterfacePresent = interfaceExists(status.TUN.Interface)
+	interfaces, interfaceErr := net.Interfaces()
+	for _, item := range interfaces {
+		if item.Name == status.TUN.Interface {
+			status.TUN.InterfacePresent = true
+		}
+	}
+	status.TUN.ObservationOK = stateErr == nil && !state.Active && interfaceErr == nil
 	if state.Active {
 		api := NewMihomoAPIFromConfig()
 		if _, err := api.GetVersion(); err == nil {
 			status.Core.ControllerHealthy = true
-			status.TUN.RuntimeEnabled, status.ProxyPort = runtimeConfigState(api, status.ProxyPort)
+			var configOK bool
+			status.TUN.RuntimeEnabled, status.ProxyPort, configOK = runtimeConfigState(api, status.ProxyPort)
+			status.TUN.ObservationOK = configOK && interfaceErr == nil
 			status.CurrentNode = runtimeCurrentNode(api, status.CurrentGroup)
 		} else if status.Core.Detail == "" {
 			status.Core.Detail = RedactURLInText(err.Error())
@@ -90,6 +115,7 @@ func (d *Daemon) managerStatus() (ManagerStatus, error) {
 	}
 	status.Core.Running = status.Core.ServiceActive && status.Core.ControllerHealthy
 	status.TUN.Enabled = status.Core.Running && status.TUN.RuntimeEnabled && status.TUN.InterfacePresent
+	status.ObservedAt = time.Now().UTC().Format(time.RFC3339)
 	return status, stateErr
 }
 
@@ -106,14 +132,14 @@ func interfaceExists(name string) bool {
 	return false
 }
 
-func runtimeConfigState(api *MihomoAPI, fallbackPort int) (bool, int) {
+func runtimeConfigState(api *MihomoAPI, fallbackPort int) (bool, int, bool) {
 	data, err := api.GetConfigs()
 	if err != nil {
-		return false, fallbackPort
+		return false, fallbackPort, false
 	}
 	var body map[string]any
 	if json.Unmarshal(data, &body) != nil {
-		return false, fallbackPort
+		return false, fallbackPort, false
 	}
 	tun, ok := body["tun"].(map[string]any)
 	enabled := false
@@ -127,7 +153,7 @@ func runtimeConfigState(api *MihomoAPI, fallbackPort int) (bool, int) {
 			break
 		}
 	}
-	return enabled, port
+	return enabled, port, ok
 }
 
 func runtimeMixedPort(api *MihomoAPI) (int, error) {
@@ -455,8 +481,8 @@ func (d *Daemon) handleManagerProxyGroupDetail(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("方法不允许"))
 		return
 	}
-	groupName, err := url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/v1/proxy-groups/"))
-	if err != nil || strings.TrimSpace(groupName) == "" {
+	groupName := strings.TrimPrefix(r.URL.Path, "/v1/proxy-groups/")
+	if strings.TrimSpace(groupName) == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("代理组无效"))
 		return
 	}
