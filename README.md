@@ -2,6 +2,8 @@
 
 面向 Loongnix / LoongArch ABI2 的 Mihomo 管理工具，通过终端界面管理代理内核、订阅配置、节点、规则和日志。
 
+![Mihomo 终端控制台首页](docs/images/tui-home.png)
+
 ## 项目来源
 
 本项目基于 [WangZhongDian/mihomo-tui](https://github.com/WangZhongDian/mihomo-tui) 开发，在原项目基础上进行了 Loongnix 适配、管理服务与代理内核分离，以及终端界面的精简和调整。感谢原作者的工作。
