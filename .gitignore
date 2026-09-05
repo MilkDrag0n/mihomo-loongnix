@@ -3,7 +3,6 @@
 /.vscode
 /idea
 *.log
-/AGENTS.md
 /main
 
 # Runtime state and downloaded cores
