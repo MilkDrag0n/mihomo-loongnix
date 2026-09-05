@@ -11,10 +11,9 @@ import (
 )
 
 func newHomePage(app *tview.Application, client *mihomotui.IPCClient, overlay *tview.Pages) *pageView {
-	statusView := tview.NewTextView().SetDynamicColors(true).SetWrap(true)
-	statusView.SetBorder(true).SetTitle(" 实际运行状态 ")
+	summary, renderSummary := newHomeSummary()
 	message := tview.NewTextView().SetDynamicColors(true)
-	portInput := tview.NewInputField().SetLabel(" 端口: ").SetFieldWidth(5)
+	portInput := newInputField().SetLabel(" 端口: ").SetFieldWidth(5)
 	portInput.SetAcceptanceFunc(func(text string, _ rune) bool {
 		if text == "" {
 			return true
@@ -25,30 +24,32 @@ func newHomePage(app *tview.Application, client *mihomotui.IPCClient, overlay *t
 		_, err := strconv.ParseUint(text, 10, 16)
 		return err == nil
 	})
-	applyPortButton := tview.NewButton(" 应用端口 ")
-	coreButton := tview.NewButton(" 启动代理 ")
-	tunButton := tview.NewButton(" 开启 TUN ")
-	refreshButton := tview.NewButton(" 刷新 ")
+	applyPortButton := newActionButton(" 应用端口 ")
+	coreButton := newActionButton(" 启动代理 ")
+	tunButton := newActionButton(" 开启 TUN ")
+	refreshButton := newActionButton(" 刷新 ")
 	bar := tview.NewFlex().
 		AddItem(portInput, 15, 0, false).
 		AddItem(applyPortButton, 12, 0, false).
 		AddItem(coreButton, 12, 0, true).
 		AddItem(tunButton, 12, 0, false).
 		AddItem(refreshButton, 8, 0, false)
-	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(statusView, 0, 1, false).AddItem(message, 2, 0, false).AddItem(bar, 3, 0, true)
+	root := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(summary, 14, 0, false).AddItem(bar, 3, 0, true).
+		AddItem(message, 1, 0, false).AddItem(nil, 0, 1, false)
 
 	var mu sync.RWMutex
 	var last mihomotui.ManagerStatus
 	pending := false
 	loaded := false
 	render := func(status mihomotui.ManagerStatus) {
-		statusView.SetText(formatHomeStatus(status))
+		renderSummary(status)
 		if status.ProxyPort > 0 {
 			portInput.SetText(strconv.Itoa(status.ProxyPort))
 		} else {
 			portInput.SetText("")
 		}
-		if status.Core.Running {
+		if status.Core.Running || status.Core.ServiceActive {
 			coreButton.SetLabel(" 停止代理 ")
 		} else {
 			coreButton.SetLabel(" 启动代理 ")
@@ -139,33 +140,73 @@ func newHomePage(app *tview.Application, client *mihomotui.IPCClient, overlay *t
 	return &pageView{Primitive: root, focusables: []tview.Primitive{portInput, applyPortButton, coreButton, tunButton, refreshButton}, first: coreButton, refresh: refresh}
 }
 
-func formatHomeStatus(status mihomotui.ManagerStatus) string {
-	coreState := "[red]已停止[-]"
+func newHomeSummary() (*tview.Flex, func(mihomotui.ManagerStatus)) {
+	core := newStatusPanel("代理内核")
+	tun := newStatusPanel("TUN 网络")
+	connection := newStatusPanel("当前连接")
+	core.SetText("[#9daaa6]正在读取内核状态…[-]")
+	tun.SetText("[#9daaa6]正在读取网络状态…[-]")
+	connection.SetText("[#9daaa6]正在读取配置与节点…[-]")
+	top := tview.NewFlex().AddItem(core, 0, 1, false).AddItem(nil, 1, 0, false).AddItem(tun, 0, 1, false)
+	root := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(top, 6, 0, false).AddItem(nil, 1, 0, false).
+		AddItem(connection, 6, 0, false).AddItem(nil, 1, 0, false)
+	return root, func(status mihomotui.ManagerStatus) {
+		coreText, tunText, connectionText := homeStatusText(status)
+		core.SetText(coreText)
+		tun.SetText(tunText)
+		connection.SetText(connectionText)
+	}
+}
+
+func homeStatusText(status mihomotui.ManagerStatus) (string, string, string) {
+	coreState := "[#e68a87::b]● 已停止[-::-]"
 	if status.Core.Running {
-		coreState = "[green]运行中[-]"
+		coreState = "[#a4d68a::b]● 运行中[-::-]"
 	} else if status.Core.ServiceActive {
-		coreState = "[yellow]服务活动但控制接口异常[-]"
+		coreState = "[#e6c384::b]● 服务活动，控制接口异常[-::-]"
 	}
-	tunState := "[gray]关闭[-]"
+	tunState := "[#9daaa6::b]○ 已关闭[-::-]"
 	if status.TUN.Enabled {
-		tunState = "[green]已开启[-]"
+		tunState = "[#a4d68a::b]● 已开启[-::-]"
 	} else if status.TUN.Configured {
-		tunState = "[yellow]已预设，尚未实际生效[-]"
+		tunState = "[#e6c384::b]● 已预设，尚未生效[-::-]"
 	}
-	profile := "无"
+	state := func(value bool, yes, no string) string {
+		if value {
+			return yes
+		}
+		return no
+	}
+	pid := "无"
+	if status.Core.PID > 0 {
+		pid = strconv.Itoa(status.Core.PID)
+	}
+	core := fmt.Sprintf("%s\n[#9daaa6]系统服务[-]  %s\n[#9daaa6]控制接口[-]  %s    [#9daaa6]进程[-] %s", coreState,
+		state(status.Core.ServiceActive, "运行中", "未运行"), state(status.Core.ControllerHealthy, "可连接", "不可连接"), pid)
+	tun := fmt.Sprintf("%s\n[#9daaa6]运行配置[-]  %s\n[#9daaa6]虚拟网卡[-]  %s", tunState,
+		state(status.TUN.RuntimeEnabled, "已启用", "未启用"), state(status.TUN.InterfacePresent, "已就绪", "未创建"))
+	profile := "尚未选择"
 	if status.ActiveProfile != nil {
 		profile = tview.Escape(status.ActiveProfile.Name)
 	}
-	port := "未监听"
+	port := "尚未设置"
 	if status.ProxyPort > 0 {
-		port = fmt.Sprintf("127.0.0.1:%d（HTTP/SOCKS）", status.ProxyPort)
+		port = fmt.Sprintf("127.0.0.1:%d  HTTP/SOCKS", status.ProxyPort)
 	}
-	currentNode := "无"
+	currentNode := "尚未选择"
 	if status.CurrentNode != "" {
 		currentNode = terminalNodeLabel(status.CurrentNode)
-		if status.CurrentGroup != "" {
-			currentNode += "  （" + tview.Escape(status.CurrentGroup) + "）"
-		}
 	}
-	return fmt.Sprintf("\n  代理内核: %s\n  systemd: %t   控制接口: %t   PID: %d\n\n  代理端口: %s\n  当前节点: %s\n\n  TUN: %s\n  运行配置: %t   虚拟网卡: %t\n\n  当前配置: %s\n", coreState, status.Core.ServiceActive, status.Core.ControllerHealthy, status.Core.PID, port, currentNode, tunState, status.TUN.RuntimeEnabled, status.TUN.InterfacePresent, profile)
+	group := "无"
+	if status.CurrentGroup != "" {
+		group = tview.Escape(status.CurrentGroup)
+	}
+	connection := fmt.Sprintf("[#9daaa6]代理地址[-]  %s\n[#9daaa6]当前节点[-]  %s\n[#9daaa6]代理组  [-]  %s\n[#9daaa6]当前配置[-]  %s", port, currentNode, group, profile)
+	return core, tun, connection
+}
+
+func formatHomeStatus(status mihomotui.ManagerStatus) string {
+	core, tun, connection := homeStatusText(status)
+	return core + "\n" + tun + "\n" + connection
 }

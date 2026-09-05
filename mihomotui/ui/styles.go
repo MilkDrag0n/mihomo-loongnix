@@ -10,20 +10,71 @@ import (
 	"mihomotui/mihomotui"
 )
 
-// configureNeutralTheme must run before widgets are constructed because tview
-// copies global theme colors into each primitive at construction time.
+// 背景和正文沿用终端默认色；只为边框、焦点和状态设置重点色。
+var (
+	colorBackground = tcell.ColorDefault
+	colorSurface    = tcell.ColorDefault
+	colorBorder     = tcell.NewHexColor(0x435051)
+	colorText       = tcell.ColorDefault
+	colorMuted      = tcell.NewHexColor(0x9daaa6)
+	colorAccent     = tcell.NewHexColor(0x8cd5bd)
+	colorSuccess    = tcell.NewHexColor(0xa4d68a)
+)
+
+// 必须在创建控件前设置；tview 会在构造时复制全局主题。
 func configureNeutralTheme() {
-	tview.Styles.PrimitiveBackgroundColor = tcell.ColorBlack
-	tview.Styles.ContrastBackgroundColor = tcell.NewHexColor(0x303030)
-	tview.Styles.MoreContrastBackgroundColor = tcell.NewHexColor(0x505050)
-	tview.Styles.BorderColor = tcell.ColorWhite
-	tview.Styles.TitleColor = tcell.ColorWhite
-	tview.Styles.GraphicsColor = tcell.ColorWhite
-	tview.Styles.PrimaryTextColor = tcell.ColorWhite
-	tview.Styles.SecondaryTextColor = tcell.ColorYellow
-	tview.Styles.TertiaryTextColor = tcell.ColorGreen
-	tview.Styles.InverseTextColor = tcell.ColorBlack
-	tview.Styles.ContrastSecondaryTextColor = tcell.ColorSilver
+	tview.Styles.PrimitiveBackgroundColor = colorBackground
+	tview.Styles.ContrastBackgroundColor = colorSurface
+	tview.Styles.MoreContrastBackgroundColor = colorBackground
+	tview.Styles.BorderColor = colorBorder
+	tview.Styles.TitleColor = colorMuted
+	tview.Styles.GraphicsColor = colorBorder
+	tview.Styles.PrimaryTextColor = colorText
+	tview.Styles.SecondaryTextColor = colorAccent
+	tview.Styles.TertiaryTextColor = colorSuccess
+	tview.Styles.InverseTextColor = colorBackground
+	tview.Styles.ContrastSecondaryTextColor = colorMuted
+}
+
+func newActionButton(label string) *tview.Button {
+	button := tview.NewButton(label).
+		SetStyle(tcell.StyleDefault.Foreground(colorText).Background(colorSurface)).
+		SetActivatedStyle(tcell.StyleDefault.Foreground(colorAccent).Background(colorBackground).Bold(true).Underline(true))
+	button.SetBorder(true)
+	focusBorder(button.Box)
+	return button
+}
+
+func newInputField() *tview.InputField {
+	field := tview.NewInputField()
+	field.SetBorder(true)
+	focusBorder(field.Box)
+	return field
+}
+
+func newDropDown() *tview.DropDown {
+	drop := tview.NewDropDown().SetListStyles(tcell.StyleDefault, tcell.StyleDefault.Reverse(true).Bold(true))
+	drop.SetBorder(true)
+	focusBorder(drop.Box)
+	return drop
+}
+
+func focusBorder(box *tview.Box) {
+	box.SetTitleAlign(tview.AlignLeft)
+	box.SetFocusFunc(func() { box.SetBorderColor(colorAccent).SetTitleColor(colorAccent) })
+	box.SetBlurFunc(func() { box.SetBorderColor(colorBorder).SetTitleColor(colorMuted) })
+}
+
+func styleTable(table *tview.Table) {
+	table.SetSelectedStyle(tcell.StyleDefault.Reverse(true).Bold(true))
+	table.SetBorderPadding(0, 0, 1, 1)
+	focusBorder(table.Box)
+}
+
+func newStatusPanel(title string) *tview.TextView {
+	panel := tview.NewTextView().SetDynamicColors(true).SetWrap(true)
+	panel.SetBorder(true).SetTitle(" "+title+" ").SetTitleAlign(tview.AlignLeft).SetBorderPadding(0, 0, 1, 1)
+	return panel
 }
 
 // terminalCursorReset is deliberately a double-width blank. tview measures a

@@ -26,15 +26,16 @@ func filterNodes(nodes []mihomotui.ProxyNode, keyword string) []mihomotui.ProxyN
 func nodeTestKey(group, node string) string { return group + "\x00" + node }
 
 func newNodesPage(app *tview.Application, client *mihomotui.IPCClient, overlay *tview.Pages) *pageView {
-	groupDrop := tview.NewDropDown().SetLabel(" 代理组: ")
-	filterInput := tview.NewInputField().SetLabel(" 筛选: ").SetPlaceholder("节点名称或类型")
-	refreshButton := tview.NewButton(" 刷新 ")
+	groupDrop := newDropDown().SetLabel(" 代理组: ")
+	filterInput := newInputField().SetLabel(" 筛选: ").SetPlaceholder("节点名称或类型")
+	refreshButton := newActionButton(" 刷新 ")
 	toolbar := tview.NewFlex().AddItem(groupDrop, 0, 1, true).AddItem(filterInput, 0, 2, false).AddItem(refreshButton, 10, 0, false)
 	table := tview.NewTable().SetSelectable(true, true).SetFixed(1, 0)
 	table.SetBorder(true).SetTitle(" 节点 ")
-	prevButton := tview.NewButton(" 上一页 ")
-	nextButton := tview.NewButton(" 下一页 ")
-	selectButton := tview.NewButton(" 使用所选节点 ")
+	styleTable(table)
+	prevButton := newActionButton(" 上一页 ")
+	nextButton := newActionButton(" 下一页 ")
+	selectButton := newActionButton(" 使用所选节点 ")
 	pageInfo := tview.NewTextView().SetTextAlign(tview.AlignCenter).SetDynamicColors(true)
 	bottom := tview.NewFlex().AddItem(prevButton, 10, 0, true).AddItem(pageInfo, 18, 0, false).AddItem(nextButton, 10, 0, false).AddItem(selectButton, 18, 0, false)
 	message := tview.NewTextView().SetDynamicColors(true)
@@ -76,7 +77,7 @@ func newNodesPage(app *tview.Application, client *mihomotui.IPCClient, overlay *
 		}
 		table.Clear()
 		for col, heading := range []string{"状态", "地区", "节点", "类型", "延迟", "测速"} {
-			table.SetCell(0, col, tview.NewTableCell(heading).SetTextColor(tcell.ColorYellow).SetSelectable(false))
+			table.SetCell(0, col, tview.NewTableCell(heading).SetTextColor(colorAccent).SetSelectable(false))
 		}
 		if groupIndex >= len(groups) {
 			pageInfo.SetText("0 / 0")
@@ -88,9 +89,9 @@ func newNodesPage(app *tview.Application, client *mihomotui.IPCClient, overlay *
 		start, end := pages.Bounds()
 		for i := start; i < end; i++ {
 			node, row := visible[i], i-start+1
-			state, color := "", tcell.ColorWhite
+			state, color := "", colorText
 			if node.Name == group.Now {
-				state, color = "● 当前", tcell.ColorGreen
+				state, color = "● 当前", colorSuccess
 			}
 			region, label := terminalNodeColumns(node.Name)
 			table.SetCell(row, 0, tview.NewTableCell(state).SetTextColor(color).SetMaxWidth(7))
@@ -108,7 +109,7 @@ func newNodesPage(app *tview.Application, client *mihomotui.IPCClient, overlay *
 			}
 			button := tview.NewTableCell(buttonText).
 				SetAlign(tview.AlignCenter).
-				SetTextColor(tcell.ColorWhite).
+				SetTextColor(colorText).
 				SetBackgroundColor(buttonColor).
 				SetMaxWidth(8)
 			button.SetClickedFunc(func() bool {
@@ -123,7 +124,7 @@ func newNodesPage(app *tview.Application, client *mihomotui.IPCClient, overlay *
 			}
 		}
 		if len(visible) == 0 {
-			table.SetCell(1, nodeNameColumn, tview.NewTableCell("无匹配节点").SetTextColor(tcell.ColorGray))
+			table.SetCell(1, nodeNameColumn, tview.NewTableCell("无匹配节点").SetTextColor(colorMuted))
 		}
 		pageInfo.SetText(fmt.Sprintf("%d / %d  ·  %d 节点", pages.Page+1, pages.Pages(), len(visible)))
 	}

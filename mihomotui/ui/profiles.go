@@ -5,23 +5,23 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"mihomotui/mihomotui"
 )
 
 func newProfilesPage(app *tview.Application, client *mihomotui.IPCClient, overlay *tview.Pages) *pageView {
-	nameInput := tview.NewInputField().SetLabel(" 名称: ").SetPlaceholder("可选；重命名时填写新名称")
-	urlInput := tview.NewInputField().SetLabel(" 链接: ").SetPlaceholder("https://...")
-	importButton := tview.NewButton(" 导入 ")
+	nameInput := newInputField().SetLabel(" 名称: ").SetPlaceholder("可选；重命名时填写新名称")
+	urlInput := newInputField().SetLabel(" 链接: ").SetPlaceholder("https://...")
+	importButton := newActionButton(" 导入 ")
 	inputs := tview.NewFlex().AddItem(nameInput, 0, 1, true).AddItem(urlInput, 0, 2, false).AddItem(importButton, 10, 0, false)
 	table := tview.NewTable().SetSelectable(true, false).SetFixed(1, 0)
 	table.SetBorder(true).SetTitle(" 配置列表 ")
-	activateButton := tview.NewButton(" 激活 ")
-	updateButton := tview.NewButton(" 更新 ")
-	renameButton := tview.NewButton(" 重命名 ")
-	deleteButton := tview.NewButton(" 删除 ")
-	refreshButton := tview.NewButton(" 刷新 ")
+	styleTable(table)
+	activateButton := newActionButton(" 激活 ")
+	updateButton := newActionButton(" 更新 ")
+	renameButton := newActionButton(" 重命名 ")
+	deleteButton := newActionButton(" 删除 ")
+	refreshButton := newActionButton(" 刷新 ")
 	actions := tview.NewFlex().AddItem(activateButton, 10, 0, true).AddItem(updateButton, 10, 0, false).AddItem(renameButton, 12, 0, false).AddItem(deleteButton, 10, 0, false).AddItem(refreshButton, 10, 0, false)
 	message := tview.NewTextView().SetDynamicColors(true)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(inputs, 3, 0, true).AddItem(table, 0, 1, false).AddItem(message, 2, 0, false).AddItem(actions, 3, 0, false)
@@ -34,20 +34,20 @@ func newProfilesPage(app *tview.Application, client *mihomotui.IPCClient, overla
 		table.Clear()
 		headers := []string{"状态", "名称", "来源", "更新时间"}
 		for col, h := range headers {
-			table.SetCell(0, col, tview.NewTableCell(h).SetTextColor(tcell.ColorYellow).SetSelectable(false))
+			table.SetCell(0, col, tview.NewTableCell(h).SetTextColor(colorAccent).SetSelectable(false))
 		}
 		for i, item := range items {
 			state := ""
 			if item.Active {
 				state = "● 活动"
 			}
-			table.SetCell(i+1, 0, tview.NewTableCell(state).SetTextColor(tcell.ColorGreen))
+			table.SetCell(i+1, 0, tview.NewTableCell(state).SetTextColor(colorSuccess))
 			table.SetCell(i+1, 1, tview.NewTableCell(item.Name).SetReference(item.ID))
 			table.SetCell(i+1, 2, tview.NewTableCell(item.Source))
 			table.SetCell(i+1, 3, tview.NewTableCell(item.UpdatedAt))
 		}
 		if len(items) == 0 {
-			table.SetCell(1, 1, tview.NewTableCell("暂无配置，请通过 URL 导入").SetTextColor(tcell.ColorGray))
+			table.SetCell(1, 1, tview.NewTableCell("暂无配置，请通过 URL 导入").SetTextColor(colorMuted))
 		}
 		if selectedID != "" {
 			for i, item := range items {

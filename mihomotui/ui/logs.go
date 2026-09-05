@@ -33,16 +33,17 @@ func formatBytes(value int64) string {
 
 func newLogsPage(app *tview.Application, client *mihomotui.IPCClient, overlay *tview.Pages) *pageView {
 	statusView := tview.NewTextView().SetDynamicColors(true).SetWrap(true)
-	filterInput := tview.NewInputField().SetLabel(" 筛选: ").SetPlaceholder("日志内容")
-	levelDrop := tview.NewDropDown().SetLabel(" 级别: ").SetOptions([]string{"全部", "DEBUG", "INFO", "WARNING", "ERROR"}, nil)
-	recordButton := tview.NewButton(" 开启磁盘记录 ")
-	pauseButton := tview.NewButton(" 暂停显示 ")
-	clearButton := tview.NewButton(" 清空界面 ")
-	refreshButton := tview.NewButton(" 刷新大小 ")
+	filterInput := newInputField().SetLabel(" 筛选: ").SetPlaceholder("日志内容")
+	levelDrop := newDropDown().SetLabel(" 级别: ").SetOptions([]string{"全部", "DEBUG", "INFO", "WARNING", "ERROR"}, nil)
+	recordButton := newActionButton(" 开启磁盘记录 ")
+	pauseButton := newActionButton(" 暂停显示 ")
+	clearButton := newActionButton(" 清空界面 ")
+	refreshButton := newActionButton(" 刷新大小 ")
 	toolbar1 := tview.NewFlex().AddItem(filterInput, 0, 2, true).AddItem(levelDrop, 20, 0, false).AddItem(recordButton, 18, 0, false)
 	toolbar2 := tview.NewFlex().AddItem(pauseButton, 14, 0, true).AddItem(clearButton, 14, 0, false).AddItem(refreshButton, 14, 0, false).AddItem(nil, 0, 1, false)
 	logView := tview.NewTextView().SetDynamicColors(true).SetScrollable(true).SetWrap(true)
 	logView.SetBorder(true).SetTitle(" Mihomo 实时日志 ")
+	focusBorder(logView.Box)
 	// Keep authoritative disk state on its own two-line row. At the common
 	// 80-column terminal width it otherwise competes with the action buttons
 	// and hides total size or the rotation policy.

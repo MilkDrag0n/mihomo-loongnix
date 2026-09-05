@@ -25,13 +25,14 @@ func filterRules(rules []mihomotui.Rule, keyword string) []mihomotui.Rule {
 }
 
 func newRulesPage(app *tview.Application, client *mihomotui.IPCClient, overlay *tview.Pages) *pageView {
-	filterInput := tview.NewInputField().SetLabel(" 筛选: ").SetPlaceholder("规则、类型或策略")
-	refreshButton := tview.NewButton(" 刷新 ")
+	filterInput := newInputField().SetLabel(" 筛选: ").SetPlaceholder("规则、类型或策略")
+	refreshButton := newActionButton(" 刷新 ")
 	toolbar := tview.NewFlex().AddItem(filterInput, 0, 1, true).AddItem(refreshButton, 10, 0, false)
 	table := tview.NewTable().SetSelectable(true, false).SetFixed(1, 0)
 	table.SetBorder(true).SetTitle(" 当前生效规则（只读） ")
-	prevButton := tview.NewButton(" 上一页 ")
-	nextButton := tview.NewButton(" 下一页 ")
+	styleTable(table)
+	prevButton := newActionButton(" 上一页 ")
+	nextButton := newActionButton(" 下一页 ")
 	pageInfo := tview.NewTextView().SetTextAlign(tview.AlignCenter)
 	bottom := tview.NewFlex().AddItem(prevButton, 10, 0, true).AddItem(pageInfo, 24, 0, false).AddItem(nextButton, 10, 0, false)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(toolbar, 3, 0, true).AddItem(table, 0, 1, false).AddItem(bottom, 3, 0, false)
@@ -46,7 +47,7 @@ func newRulesPage(app *tview.Application, client *mihomotui.IPCClient, overlay *
 		start, end := pages.Bounds()
 		table.Clear()
 		for col, heading := range []string{"#", "规则", "类型", "策略"} {
-			table.SetCell(0, col, tview.NewTableCell(heading).SetSelectable(false).SetTextColor(tcell.ColorYellow))
+			table.SetCell(0, col, tview.NewTableCell(heading).SetSelectable(false).SetTextColor(colorAccent))
 		}
 		for i := start; i < end; i++ {
 			rule, row := filtered[i], i-start+1
@@ -56,7 +57,7 @@ func newRulesPage(app *tview.Application, client *mihomotui.IPCClient, overlay *
 			table.SetCell(row, 3, tview.NewTableCell(rule.Policy))
 		}
 		if len(filtered) == 0 {
-			table.SetCell(1, 1, tview.NewTableCell("无匹配规则").SetTextColor(tcell.ColorGray))
+			table.SetCell(1, 1, tview.NewTableCell("无匹配规则").SetTextColor(colorMuted))
 		}
 		pageInfo.SetText(fmt.Sprintf("%d / %d  ·  %d / %d", pages.Page+1, pages.Pages(), len(filtered), len(all)))
 	}

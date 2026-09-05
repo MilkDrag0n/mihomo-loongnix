@@ -39,7 +39,7 @@ func (p *pageView) focusNext(app *tview.Application, current tview.Primitive, re
 	}
 	index := -1
 	for i, primitive := range p.focusables {
-		if primitive == current {
+		if primitive == current || primitive.HasFocus() {
 			index = i
 			break
 		}

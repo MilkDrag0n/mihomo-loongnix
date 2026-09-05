@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
@@ -12,6 +13,7 @@ func ShowModal(app *tview.Application, pages *tview.Pages, title, message string
 	modal := tview.NewModal().
 		SetText(fmt.Sprintf("%s\n\n%s", title, message)).
 		AddButtons(buttons).
+		SetButtonActivatedStyle(tcell.StyleDefault.Reverse(true).Bold(true)).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 			pages.HidePage("modal")
 			pages.RemovePage("modal")
