@@ -209,6 +209,7 @@ class ExecutionTests(unittest.TestCase):
                 args = SimpleNamespace(commit=COMMIT[:7], build_root=base,
                                        backup_root=base / 'backups', check=check)
                 with self.subTest(check=check), patch.object(deploy.os, 'uname', return_value=SimpleNamespace(machine='loongarch64')), \
+                        patch.object(deploy, 'prepare_web', return_value=None), \
                         patch.object(deploy, 'verify_build', return_value='expected'), \
                         patch.object(deploy, 'services', return_value=states), \
                         patch.object(deploy, 'service_paths', return_value=(base / 'core', [])), \
@@ -279,3 +280,70 @@ class ValidationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class UnifiedDeploymentTests(unittest.TestCase):
+    def args(self, check=False, skip=False):
+        return SimpleNamespace(check=check, skip_web=skip, web_build_root=Path('/fake/builds/web'))
+
+    def test_absent_web_is_optional(self):
+        with patch.object(deploy, 'run', return_value='LoadState=not-found'), patch.object(deploy.subprocess, 'run') as child:
+            self.assertIsNone(deploy.prepare_web(Path('/fake/' + COMMIT), self.args()))
+        child.assert_not_called()
+
+    def test_skip_web_does_not_query_service(self):
+        with patch.object(deploy, 'run') as run:
+            self.assertIsNone(deploy.prepare_web(Path('/fake/' + COMMIT), self.args(skip=True)))
+        run.assert_not_called()
+
+    def test_preflight_uses_exact_commit_and_read_only_mode(self):
+        for check, option in [(True, '--check'), (False, '--preflight')]:
+            with self.subTest(check=check), patch.object(deploy, 'run', return_value='LoadState=loaded'), patch.object(deploy.subprocess, 'run') as child:
+                command = deploy.prepare_web(Path('/fake/' + COMMIT), self.args(check=check))
+                self.assertEqual(command[2], COMMIT)
+                child.assert_called_once_with(command + [option], check=True)
+
+    def test_missing_web_package_aborts_preflight(self):
+        with patch.object(deploy, 'run', return_value='LoadState=loaded'), patch.object(deploy.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, ['web'])):
+            with self.assertRaises(subprocess.CalledProcessError):
+                deploy.prepare_web(Path('/fake/' + COMMIT), self.args())
+
+    def test_bad_unit_is_not_silently_skipped(self):
+        with patch.object(deploy, 'run', return_value='LoadState=error'), patch.object(deploy.subprocess, 'run') as child:
+            with self.assertRaises(RuntimeError):
+                deploy.prepare_web(Path('/fake/' + COMMIT), self.args())
+        child.assert_not_called()
+
+    def test_web_failure_reports_partial_success(self):
+        with patch.object(deploy.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, ['web'])):
+            with self.assertRaisesRegex(RuntimeError, 'TUI／管理器已处于目标版本'):
+                deploy.finish_web(['web'])
+
+    def test_web_build_root_follows_custom_build_root(self):
+        args, _ = deploy.parse_args([COMMIT, '--build-root', '/fake/builds'])
+        self.assertEqual(args.web_build_root, Path('/fake/builds/web'))
+
+    def test_same_manager_still_updates_web_and_check_never_updates(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            (base / COMMIT).mkdir()
+            states = {deploy.MANAGER: {'ActiveState': 'active', 'MainPID': '41'}, deploy.CORE: {'ActiveState': 'active', 'MainPID': '42'}}
+            before = {'core': {'running': True, 'service_active': True},
+                      'tun': {'configured': False, 'enabled': False}, 'proxy_port': 17890}
+            for check in [True, False]:
+                args = SimpleNamespace(commit=COMMIT, build_root=base, backup_root=base / 'backup', check=check)
+                with patch.object(deploy.os, 'uname', return_value=SimpleNamespace(machine='loongarch64')), \
+                     patch.object(deploy, 'verify_build', return_value='same'), \
+                     patch.object(deploy, 'prepare_web', return_value=['web']), \
+                     patch.object(deploy, 'services', return_value=states), \
+                     patch.object(deploy, 'service_paths', return_value=(base / 'core', [])), \
+                     patch.object(deploy, 'status', return_value=before), \
+                     patch.object(deploy, 'digest', return_value='same'), \
+                     patch.object(deploy, 'probe'), patch.object(deploy, 'deploy') as install, \
+                     patch.object(deploy, 'finish_web') as finish:
+                    deploy.execute(args, None)
+                install.assert_not_called()
+                if check:
+                    finish.assert_not_called()
+                else:
+                    finish.assert_called_once_with(['web'])

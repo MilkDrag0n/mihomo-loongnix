@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""升级现有 Loongnix 双服务部署；不用于首次安装或替换 Mihomo 内核。"""
+"""升级现有 Loongnix 双服务部署；已安装 Web 随同升级；不用于首次安装或替换 Mihomo 内核。"""
 import argparse
 import datetime
 import fcntl
@@ -312,6 +312,8 @@ def parse_args(argv=None):
     parser.add_argument('commit', help='目标构建的完整提交号或唯一缩写（至少 7 位）')
     parser.add_argument('--check', action='store_true', help='仅检查，不停止服务或写入运行数据')
     parser.add_argument('--build-root', type=Path, default=home / '.local/share/mihomo-loongnix/builds', help='构建产物根目录')
+    parser.add_argument('--skip-web', action='store_true', help='仅升级 TUI／管理器，明确跳过 Web')
+    parser.add_argument('--web-build-root', type=Path, help='Web 构建根目录，默认在 build-root/web')
     parser.add_argument('--backup-root', type=Path, default=home / 'backups/mihomo-loongnix', help='私有备份根目录')
     parser.add_argument('--probe-url', default='https://cp.cloudflare.com/generate_204', help='HTTPS 连通性检查地址')
     parser.add_argument('--probe-status', type=int, default=204, help='检查地址预期的 HTTP 状态码')
@@ -323,7 +325,40 @@ def parse_args(argv=None):
         parser.error('检查地址必须是无账号密码的 HTTPS URL，预期状态码必须为 2xx')
     args.build_root = args.build_root.expanduser().resolve()
     args.backup_root = args.backup_root.expanduser().resolve()
+    args.web_build_root = (args.web_build_root or args.build_root / 'web').expanduser().resolve()
     return args, caller
+
+
+def prepare_web(build, args):
+    """在暂停代理前核验同提交 Web；子工具保留独立备份和回退。"""
+    if args.skip_web:
+        print('已指定跳过 Web。', flush=True)
+        return None
+    fields = dict(line.split('=', 1) for line in run(
+        'systemctl', 'show', 'mihomo-web.service', '-p', 'LoadState').splitlines() if '=' in line)
+    if fields.get('LoadState') == 'not-found':
+        print('未安装 Web，本次仅升级 TUI／管理器。', flush=True)
+        return None
+    if fields.get('LoadState') != 'loaded':
+        raise RuntimeError('Web 服务配置异常，请先核对；尚未升级任何组件')
+    command = [sys.executable, str(Path(__file__).with_name('deploy-web.py')),
+               build.name, '--build-root', str(args.web_build_root)]
+    print('检查同提交 Web 发布包' + ('。' if args.check else '与私有配置。'), flush=True)
+    subprocess.run(command + ['--check' if args.check else '--preflight'], check=True)
+    return command
+
+
+def finish_web(command):
+    if command is None:
+        return
+    print('TUI／管理器阶段已完成，开始更新 Web。', flush=True)
+    try:
+        subprocess.run(command, check=True)
+    except (subprocess.CalledProcessError, KeyboardInterrupt) as exc:
+        raise RuntimeError('Web 阶段未完成；TUI／管理器已处于目标版本。'
+                           'Web 恢复结果以以上输出为准；修复后可重跑同一部署命令，'
+                           '相同管理器构建不会再次重启。') from exc
+    print('统一部署完成：TUI／管理器与 Web 均已完成。', flush=True)
 
 
 def execute(args, caller):
@@ -337,6 +372,7 @@ def execute(args, caller):
         raise RuntimeError('找不到唯一的已构建提交，请先构建或使用完整提交号')
     build = matches[0]
     expected = verify_build(build)
+    web_command = prepare_web(build, args)
     states = services()
     if states[MANAGER]['ActiveState'] != 'active' or states[CORE]['ActiveState'] not in ['active', 'inactive']:
         raise RuntimeError('要求管理器运行且内核处于稳定的运行或关闭状态')
@@ -361,9 +397,11 @@ def execute(args, caller):
         print('预检查通过；尚未制作正式备份，未修改程序或服务。')
         return
     if digest(TARGET) == expected:
-        print('已安装相同构建且检查通过，无需重复部署。')
+        print('TUI／管理器已安装相同构建，跳过替换。', flush=True)
+        finish_web(web_command)
         return
     deploy(build, expected, before, states, core, files, args, caller, events)
+    finish_web(web_command)
 
 
 def main(argv=None):

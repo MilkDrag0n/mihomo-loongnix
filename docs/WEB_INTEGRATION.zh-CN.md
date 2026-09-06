@@ -127,7 +127,23 @@ JSON 拒绝未知字段；模板不含真实凭据。初始安装器生成全部
 
 配置通过 `--config` 指定；第一版使用受控 JSON，替代方案阶段拟定的一组环境变量，不解析不必要的代理身份头，也不设置未使用的签名密钥。修改密码后重启 Web 以撤销旧会话；可以通过发布程序的 `--hash-password` 从标准输入生成哈希，避免在命令参数中放密码。更改配置时保留备份并校验 JSON、权限和公开入口。
 
-## 独立升级与回退
+## 日常统一升级
+
+已安装 Web 后，推荐使用主部署入口。先从同一个干净提交准备 TUI／管理器和 Web 包，然后只执行一次部署：
+
+~~~bash
+./scripts/build-release.sh
+./scripts/build-web.sh
+commit=$(git rev-parse HEAD)
+python3 scripts/deploy.py "$commit" --check
+sudo python3 scripts/deploy.py "$commit"
+~~~
+
+已有对应构建时复用即可，不重复构建。主入口自动发现已安装的 Web，并在管理器维护前核验同提交 Web 包；正式部署还预检私有配置。先完成管理器升级，再调用 Web 子工具，保留网页配置和开关状态。主入口 --skip-web 可明确跳过 Web。
+
+两个阶段各自备份与恢复：Web 失败不会撤销成功的管理器升级，按错误信息修复后可重跑同一命令。没有安装 Web 的服务器不自动安装；首次安装仍需以下专用工具提供域名与认证方式。
+
+## 单独升级与回退
 
 ```bash
 ./scripts/build-web.sh

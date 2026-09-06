@@ -117,7 +117,7 @@ python3 scripts/deploy.py "$commit" --check
 sudo python3 scripts/deploy.py "$commit"
 ```
 
-已有对应构建时可直接复用。脚本会校验来源、完整备份、替换程序、重试验证，并在失败时自动回滚；相同构建不会重复部署。需要 Python 3.8+，升级前须关闭 TUN。路径、适用范围与故障恢复见 [部署说明](docs/LOONGNIX.md#正式部署)。
+已安装 Web 时，先另运行一次 ./scripts/build-web.sh，准备同一提交的 Web 构建；随后上面的 deploy.py 会一起更新 Web，无需再执行第二个部署命令。未安装 Web 时自动跳过。已有对应构建时可直接复用。脚本会校验来源、完整备份、替换程序、重试验证，并在失败时自动回滚；相同 TUI／管理器构建会跳过替换，但仍继续处理 Web。两阶段各自备份、各自恢复；Web 阶段失败不会撤销已成功的管理器升级。需要 Python 3.8+，升级前须关闭 TUN。路径、适用范围与故障恢复见 [部署说明](docs/LOONGNIX.md#正式部署)。
 
 ## 项目结构
 
@@ -168,9 +168,9 @@ mihomo-loongnix/
 
 项目包含管理后端、TUI 和可选网页。网页采用 Vue 3 / TypeScript，通过独立 Go 网关与 TUI 共用同一个管理器；运行时不需要 Node。网页有概览、配置、节点、规则和日志五页，支持密码登录或由外部网关认证，以及深浅主题和手机布局。
 
-Web 默认关闭，独立安装、测试和升级。在 TUI 首页开启／关闭，或使用 `mihomo-tui web status|start|stop`。退出 TUI 不关闭 Web；关闭 Web 不影响代理，服务器重启后默认不开启。首次安装需要先准备 HTTPS 入口；已有 Cloudflare Zero Trust 访问保护时可选择 external 模式，不设置 Web 管理员密码，不能仅运行开关命令。
+Web 默认关闭，独立安装和测试；已安装后随统一部署入口升级。在 TUI 首页开启／关闭，或使用 `mihomo-tui web status|start|stop`。退出 TUI 不关闭 Web；关闭 Web 不影响代理，服务器重启后默认不开启。首次安装需要先准备 HTTPS 入口；已有 Cloudflare Zero Trust 访问保护时可选择 external 模式，不设置 Web 管理员密码，不能仅运行开关命令。
 
-网页构建与安装流程见 [网页接入指南](docs/WEB_INTEGRATION.zh-CN.md)。构建需要 Node >=22.12、pnpm 10.34.5；使用 `./scripts/test-web.sh` 独立测试、`./scripts/build-web.sh` 归档，安装／升级使用 `scripts/deploy-web.py`，不会停代理双服务。首次生产安装与回退须在实际环境验收；假数据预览不代表已部署。
+网页构建与安装流程见 [网页接入指南](docs/WEB_INTEGRATION.zh-CN.md)。构建需要 Node >=22.12、pnpm 10.34.5；使用 `./scripts/test-web.sh` 独立测试、`./scripts/build-web.sh` 归档，首次安装和单独回退仍由 `scripts/deploy-web.py` 处理；日常升级只执行 `scripts/deploy.py`。Web 阶段不停止代理双服务，前面的管理器阶段仍会短暂停止代理。首次生产安装与回退须在实际环境验收；假数据预览不代表已部署。
 
 - [管理后端接口](docs/MANAGER_API.zh-CN.md)：供 TUI／网关使用的 /v1 与 Web 生命周期。
 - [浏览器 API](docs/WEB_API.zh-CN.md)：登录、业务映射、CSRF、错误、日志、只读摘要。

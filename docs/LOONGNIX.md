@@ -74,6 +74,16 @@ curl --unix-socket "$HOME/.local/state/mihomo-loongnix-test/run/daemon.sock" htt
 
 首次安装仍使用 README 中的安装命令。已有双服务部署统一使用仓库里的 `scripts/deploy.py`，不再为每次升级生成写死版本的脚本。部署工具使用 Python 3.8+ 标准库，另需 Go（读取实际二进制构建信息）、curl、GNU tar（支持 ACL 与扩展属性）和 systemd。
 
+### Web 随统一入口升级
+
+已安装 Web 的服务器，日常只执行一次 deploy.py。先从同一干净提交分别运行 ./scripts/build-release.sh 与 ./scripts/build-web.sh，准备两份构建，再执行下面的统一部署命令。
+
+工具先核验 Web 包；正式 sudo 部署还会预检私有配置，缺包或配置错误会在代理维护前失败。然后依次执行管理器阶段和 Web 阶段，保留 Web 的域名、认证方式、开关和自启设置。未安装 Web 时自动跳过，不要求 Node 或 Web 构建。
+
+两阶段分别备份、分别恢复，不是跨组件的整体回滚。Web 阶段失败时，已成功的管理器升级保留；修复错误后重跑同一命令即可，管理器相同构建不再重启。Web 的备份路径由子工具输出，默认位于调用用户的 ~/backups/mihomo-loongnix；主工具 --backup-root 仅作用于管理器备份。
+
+--web-build-root 可指定 Web 包目录，默认是 --build-root 下的 web/。--skip-web 可明确仅更新管理器。--check 检查两份发布包但不读取 root 私有 Web 配置、不执行部署。首次可选 Web 安装及单独回退见网页接入指南。
+
 ### 日常升级流程
 
 先在普通用户下完成修改、测试与提交，然后构建：
@@ -99,7 +109,7 @@ sudo python3 scripts/deploy.py "$commit" --build-root /absolute/path/to/builds
 ### 部署步骤与边界
 
 1. 校验构建清单和实际二进制中的提交号、目标平台、`vcs.modified=false`。只有本仓库 `build-release.sh` 生成的完整产物目录可以部署，不能直接传入单个下载文件。
-2. 检查服务启动路径、当前状态、配置、端口与代理连通性；root 部署同时核对运行进程与磁盘程序的校验值。已安装相同校验值的构建时直接退出，不重启服务。
+2. 检查服务启动路径、当前状态、配置、端口与代理连通性；root 部署同时核对运行进程与磁盘程序的校验值。已安装相同管理器构建时跳过管理器替换，仍继续处理已安装的 Web。
 3. 获取部署互斥锁，避免两次升级并发修改服务；将新旧程序暂存并校验。
 4. 暂停双服务，对完整运行数据、现用 TUI、现用 Mihomo、unit 及其覆盖配置制作保留权限、ACL 与扩展属性的快照，并与源文件比较验证。
 5. 原子替换 `/usr/local/bin/mihomo-tui`，恢复管理器及内核此前的运行状态；内核原本关闭时仍保持关闭。不会更换 Mihomo 内核或重写 unit，也不会修改开机启用状态。

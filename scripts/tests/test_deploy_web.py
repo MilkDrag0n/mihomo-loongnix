@@ -94,3 +94,49 @@ class ExternalInstallationTest(unittest.TestCase):
             self.assertEqual(web.installation_password_hash(Path('/demo/mihomo-web'), 'external'), '')
             prompt.assert_not_called()
             execute.assert_not_called()
+
+
+class WebCommandTimeoutTest(unittest.TestCase):
+    def test_commands_have_timeout_and_report_system_failure(self):
+        import subprocess
+        with patch.object(web.subprocess, 'run', side_effect=subprocess.TimeoutExpired(['systemctl'], 120)) as execute:
+            with self.assertRaisesRegex(RuntimeError, '共享挂载'):
+                web.run('systemctl', 'daemon-reload')
+        self.assertEqual(execute.call_args.kwargs['timeout'], 120)
+
+
+class WebPreflightTest(unittest.TestCase):
+    def test_private_preflight_validates_without_publishing(self):
+        from contextlib import ExitStack
+        import os
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            builds = root / 'builds'
+            build = builds / ('a' * 40)
+            build.mkdir(parents=True)
+            config = root / 'config'
+            config.write_text('{"auth_mode":"external"}')
+            current = root / 'current'
+            current.symlink_to(build)
+            with (root / 'lock').open('a') as lock, ExitStack() as stack:
+                for name, value in {'CONFIG': config, 'CURRENT': current, 'STATE': root / 'state',
+                                    'UNIT_FILE': root / 'unit', 'RELEASES': root / 'releases'}.items():
+                    stack.enter_context(patch.object(web, name, value))
+                stack.enter_context(patch.object(web, 'open', return_value=lock, create=True))
+                stack.enter_context(patch.object(web.os, 'geteuid', return_value=0))
+                stack.enter_context(patch.object(web.sys, 'argv', ['deploy-web.py', 'a'*40, '--build-root', str(builds), '--preflight']))
+                stack.enter_context(patch.object(web, 'verify_build'))
+                stack.enter_context(patch.object(web, 'service_state', return_value={'LoadState':'loaded','ActiveState':'inactive'}))
+                execute = stack.enter_context(patch.object(web, 'run'))
+                snapshot = stack.enter_context(patch.object(web, 'snapshot'))
+                old_mask = os.umask(0o077)
+                try:
+                    web.main()
+                finally:
+                    os.umask(old_mask)
+                snapshot.assert_not_called()
+                self.assertEqual(execute.call_count, 1)
+                self.assertIn('--check', execute.call_args.args)
+                self.assertEqual(config.read_text(), '{"auth_mode":"external"}')
+                self.assertEqual(current.resolve(), build)
+                self.assertFalse((root / 'releases').exists())

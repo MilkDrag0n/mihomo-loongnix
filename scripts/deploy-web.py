@@ -27,8 +27,15 @@ SCRIPT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def run(*args, **kwargs):
-    return subprocess.run(args, check=True, text=True, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, **kwargs).stdout.strip()
+    if args[0] == 'systemctl':
+        print('Web：执行服务操作 ' + ' '.join(args[1:]), flush=True)
+    kwargs.setdefault('timeout', 120)
+    try:
+        return subprocess.run(args, check=True, text=True, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, **kwargs).stdout.strip()
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError('命令超时（120 秒）：' + str(args[0]) +
+                           '；若为服务操作，请检查 systemd 与共享挂载状态') from exc
 
 
 def installation_password_hash(binary, auth_mode):
@@ -167,7 +174,7 @@ def restore(backup):
     run('systemctl', 'daemon-reload')
     if meta['service'].get('LoadState') != 'not-found':
         enabled = meta['service'].get('UnitFileState') == 'enabled'
-        run('systemctl', 'enable' if enabled else 'disable', UNIT)
+        run('systemctl', '--no-reload', 'enable' if enabled else 'disable', UNIT)
         if meta['service'].get('ActiveState') == 'active':
             run('systemctl', 'start', UNIT)
             healthy()
@@ -182,12 +189,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('commit', nargs='?', help='完整提交或至少 7 位前缀')
     parser.add_argument('--check', action='store_true', help='只检查发布包；不启动服务')
+    parser.add_argument('--preflight', action='store_true', help='仅核验已安装 Web 的候选配置，需要 sudo，不发布')
     parser.add_argument('--install', action='store_true', help='首次可选安装，安装后保持关闭')
     parser.add_argument('--public-url', help='首次安装的 HTTPS 公开入口')
     parser.add_argument('--auth-mode', choices=['password', 'external'], help='首次安装认证方式；external 使用现有外部访问控制，不设置 Web 密码')
     parser.add_argument('--rollback', type=Path, help='恢复本工具的备份目录')
     parser.add_argument('--build-root', type=Path, default=home / '.local/share/mihomo-loongnix/builds/web')
     args = parser.parse_args()
+    if args.preflight and (args.install or args.rollback or args.check):
+        raise ValueError('--preflight 仅用于已有安装的独立预检查')
     if args.auth_mode and not args.install:
         raise ValueError('--auth-mode 仅用于首次安装；升级保留已有认证配置')
     if args.rollback:
@@ -243,6 +253,10 @@ def main():
         candidate = Path(tmp) / 'config.json'
         candidate.write_text(config_text if config_text else CONFIG.read_text())
         run(str(build / BINARY), '--config', str(candidate), '--static', str(build / 'static'), '--check')
+    if args.preflight:
+        print('Web 发布包、私有配置与静态资源预检查通过；未发布。', flush=True)
+        return
+    print('Web：归档候选版本并准备备份。', flush=True)
     RELEASES.mkdir(parents=True, exist_ok=True)
     RELEASES.parent.chmod(0o755)
     RELEASES.chmod(0o755)
@@ -296,7 +310,7 @@ def main():
         set_current(destination)
         run('systemctl', 'daemon-reload')
         if args.install:
-            run('systemctl', 'disable', UNIT)
+            run('systemctl', '--no-reload', 'disable', UNIT)
         if before.get('ActiveState') == 'active':
             run('systemctl', 'start', UNIT)
             healthy()
