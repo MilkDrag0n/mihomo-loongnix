@@ -1,3 +1,5 @@
+> 部署流程已简化为 ./scripts/deploy.sh，直接构建当前代码并更新固定目录。本文中关于版本归档和回退的原始设计仅为历史方案；以 AGENTS.md 和 docs/WEB_INTEGRATION.zh-CN.md 为准。
+
 > 实现更新：现已支持显式 external 外部认证模式，不再要求 Web 管理员密码；接口和部署行为以 docs/WEB_API.zh-CN.md、docs/WEB_INTEGRATION.zh-CN.md 为准。以下保留方案决策记录。
 
 # Mihomo Web 实施方案

@@ -27,7 +27,7 @@
 | 操作系统 | 主要面向 Loongnix GNU/Linux 25、LoongArch ABI2；机器架构通常显示为 `loongarch64` |
 | 服务管理 | systemd，用于分别管理后台服务和 Mihomo 内核 |
 | 构建工具 | Git、Go `1.26.1` 或更新版本，以 [go.mod](go.mod) 为准 |
-| 部署工具 | Python 3.8+、curl、GNU tar；Python 用于部署工具及构建前的回归测试 |
+| 部署工具 | Python 3.8+、sudo、systemd；测试与日常部署分开 |
 | 内核 | 已解压、具有执行权限的 ABI2 兼容 Mihomo 程序 |
 | 终端 | 支持 UTF-8 和颜色的终端，可通过 SSH 使用 |
 | 权限 | 安装服务需要 root；日常使用由普通用户通过授权组操作 |
@@ -62,31 +62,21 @@ sudo /var/lib/mihomo-tui/bin/mihomo -v
 
 默认查找的文件名是 **`mihomo`**。安装器也会查找系统路径中的 `mihomo`，例如 `/usr/local/bin/mihomo`，并将找到的绝对路径写进 `mihomo.service`。显式设置 `mihomo_binary_path` 时可以使用其他文件名；已安装服务的启动路径还需要同步更新。
 
-### 3. 验证并构建
+### 3. 构建当前代码
 
-```bash
-./scripts/build-release.sh
-```
+~~~bash
+./scripts/build-current.sh
+~~~
 
-脚本要求工作区干净，执行测试、静态检查与敏感信息检查，再构建 `linux/loong64` 程序。产物默认保存在：
-
-```text
-~/.local/share/mihomo-loongnix/builds/<完整提交号>/
-├── mihomo-tui-linux-loong64
-├── BUILD-INFO.txt
-└── SHA256SUMS
-```
-
-构建记录包含源码提交号和工具链信息，便于确认程序来源。脚本会拒绝覆盖同一提交的已有构建。
+普通用户构建当前工作区，包括未提交修改；不自动运行测试。程序输出到 ~/.local/share/mihomo-loongnix/build/current/mihomo-tui。
 
 ### 4. 安装后台服务
 
 在源码目录中执行：
 
 ```bash
-commit=$(git rev-parse HEAD)
-artifact_root="${XDG_DATA_HOME:-$HOME/.local/share}/mihomo-loongnix/builds"
-sudo "$artifact_root/$commit/mihomo-tui-linux-loong64" install_service
+artifact_root="${XDG_DATA_HOME:-$HOME/.local/share}/mihomo-loongnix/build/current"
+sudo "$artifact_root/mihomo-tui" install_service
 ```
 
 安装器会安装 `/usr/local/bin/mihomo-tui`，创建并启动 `mihomo-manager.service`，同时创建独立的 `mihomo.service`。全新安装后，先导入并激活配置，再从首页启动内核。
@@ -108,16 +98,17 @@ mihomo-tui
 
 ### 已有部署升级
 
-已安装双服务时，使用仓库自带部署脚本。先提交修改并构建，再指定目标提交：
+用普通用户直接执行，不需要版本号或提前提交：
 
-```bash
-./scripts/build-release.sh
-commit=$(git rev-parse HEAD)
-python3 scripts/deploy.py "$commit" --check
-sudo python3 scripts/deploy.py "$commit"
-```
+~~~bash
+./scripts/deploy.sh
+~~~
 
-已安装 Web 时，先另运行一次 ./scripts/build-web.sh，准备同一提交的 Web 构建；随后上面的 deploy.py 会一起更新 Web，无需再执行第二个部署命令。未安装 Web 时自动跳过。已有对应构建时可直接复用。脚本会校验来源、完整备份、替换程序、重试验证，并在失败时自动回滚；相同 TUI／管理器构建会跳过替换，但仍继续处理 Web。两阶段各自备份、各自恢复；Web 阶段失败不会撤销已成功的管理器升级。需要 Python 3.8+，升级前须关闭 TUN。路径、适用范围与故障恢复见 [部署说明](docs/LOONGNIX.md#正式部署)。
+脚本构建当前 TUI／管理器代码；已安装 Web 时一起构建。全部构建成功后才申请 sudo 权限，替换固定目录中的程序并重启管理器，保留 Web 原来的开关状态。Web 服务文件未变化时不重载 systemd。
+
+不停止或更新 Mihomo 内核，不覆盖订阅、运行数据、域名或认证配置。没有部署备份、快照和自动回滚；失败直接显示错误和日志。测试放在开发流程中，不在每次部署时执行。历史备份保留。
+
+仅构建而不更新服务可运行 ./scripts/deploy.sh --build-only。首次安装另行处理，详见 [开发与部署说明](docs/LOONGNIX.md#正式部署)。
 
 ## 项目结构
 
@@ -140,7 +131,7 @@ mihomo-loongnix/
 ├── internal/webgateway/      # 网页鉴权、接口映射、日志和摘要
 ├── internal/webconfig/       # 可选网页私有配置
 ├── deploy/web/               # 独立网页服务模板
-├── scripts/                  # 构建、部署与回滚、敏感信息检查、Git 钩子安装
+├── scripts/                  # 构建、快速部署、敏感信息检查、Git 钩子安装
 ├── docs/                     # 部署说明、接口及测试文档
 ├── testdata/                 # 无真实凭据的测试样例
 ├── .githooks/                # 提交前检查
@@ -168,9 +159,9 @@ mihomo-loongnix/
 
 项目包含管理后端、TUI 和可选网页。网页采用 Vue 3 / TypeScript，通过独立 Go 网关与 TUI 共用同一个管理器；运行时不需要 Node。网页有概览、配置、节点、规则和日志五页，支持密码登录或由外部网关认证，以及深浅主题和手机布局。
 
-Web 默认关闭，独立安装和测试；已安装后随统一部署入口升级。在 TUI 首页开启／关闭，或使用 `mihomo-tui web status|start|stop`。退出 TUI 不关闭 Web；关闭 Web 不影响代理，服务器重启后默认不开启。首次安装需要先准备 HTTPS 入口；已有 Cloudflare Zero Trust 访问保护时可选择 external 模式，不设置 Web 管理员密码，不能仅运行开关命令。
+Web 默认关闭，独立安装和测试；已安装后随当前代码一起快速更新。在 TUI 首页开启／关闭，或使用 `mihomo-tui web status|start|stop`。退出 TUI 不关闭 Web；关闭 Web 不影响代理，服务器重启后默认不开启。首次安装需要先准备 HTTPS 入口；已有 Cloudflare Zero Trust 访问保护时可选择 external 模式，不设置 Web 管理员密码，不能仅运行开关命令。
 
-网页构建与安装流程见 [网页接入指南](docs/WEB_INTEGRATION.zh-CN.md)。构建需要 Node >=22.12、pnpm 10.34.5；使用 `./scripts/test-web.sh` 独立测试、`./scripts/build-web.sh` 归档，首次安装和单独回退仍由 `scripts/deploy-web.py` 处理；日常升级只执行 `scripts/deploy.py`。Web 阶段不停止代理双服务，前面的管理器阶段仍会短暂停止代理。首次生产安装与回退须在实际环境验收；假数据预览不代表已部署。
+网页构建与安装流程见 [网页接入指南](docs/WEB_INTEGRATION.zh-CN.md)。Web 构建需要 Node >=22.12、pnpm 10.34.5；使用 ./scripts/test-web.sh 独立测试。首次安装使用 scripts/deploy-web.py；日常只运行 ./scripts/deploy.sh。
 
 - [管理后端接口](docs/MANAGER_API.zh-CN.md)：供 TUI／网关使用的 /v1 与 Web 生命周期。
 - [浏览器 API](docs/WEB_API.zh-CN.md)：登录、业务映射、CSRF、错误、日志、只读摘要。

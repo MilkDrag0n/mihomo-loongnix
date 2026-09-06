@@ -21,10 +21,10 @@ flowchart LR
 | 网页源码 | web/，Vue 3、TypeScript、Vite、Tailwind CSS、daisyUI |
 | 独立网关 | cmd/mihomo-web/、internal/webgateway/ |
 | 可选配置类型 | internal/webconfig/；无前端依赖 |
-| Web 正式构建 | ~/.local/share/mihomo-loongnix/builds/web/<完整提交>/ |
+| Web 正式构建 | ~/.local/share/mihomo-loongnix/build/current/ |
 | 日常检查 | ~/.local/share/mihomo-loongnix/checks/web/ |
 | 测试私有状态 | ~/.local/state/mihomo-loongnix-test/web/ |
-| Web 安装 | /opt/mihomo-web/releases/<完整提交>/，current 指向当前版本 |
+| Web 安装 | /opt/mihomo-web/runtime/，current 指向固定运行目录 |
 | 私有配置 | /etc/mihomo-web/config.json，root:mihomo-web，0640 |
 | 独立状态目录 | /var/lib/mihomo-web，mihomo-web，0700 |
 
@@ -35,7 +35,7 @@ flowchart LR
 ./scripts/build-web.sh
 ```
 
-正式构建要求干净提交，记录完整提交、Go 元信息、Node/pnpm、依赖锁摘要，归档独立程序、static/、unit 和校验清单。同一提交不能覆盖归档。TUI 构建不要求 Node、静态资源或网页运行；同一 Go module 的纯 Go 测试仍会覆盖网关。
+构建直接使用当前工作区，包括未提交修改。输出到固定目录，不再记录清单或按提交归档。测试单独执行，构建和部署不自动跑测试。未安装 Web 的日常部署不需要 Node。
 
 ## 完全隔离的预览与测试
 
@@ -55,18 +55,17 @@ ssh -N -L 19080:127.0.0.1:19080 server-pc
 
 ## 正式安装（默认关闭）
 
-先按 [原部署流程](LOONGNIX.md) 安装支持 /v1/web/* 的 manager／TUI。这属于独立的基础后端升级，按原规则备份和验证；Web 专用部署工具不会更新它。
+先按 README 安装管理器／TUI。Web 首次安装单独处理；已经安装后只使用 ./scripts/deploy.sh 更新。
 
 准备实际 HTTPS 域名或私有 HTTPS 入口，将其转发到服务器 127.0.0.1:9080。转发保留公开 Host；日志路径禁用缓冲、允许 SSE 心跳，不使用整体短请求时限。第一版采用独立站点根路径，不支持挂在 /mihomo/ 等子路径。浏览器公开地址与 Homepage 内部 API 地址分开配置。
 
 ```bash
-commit=$(git rev-parse HEAD)
-python3 scripts/deploy-web.py "$commit" --check
+./scripts/build-web.sh
 # 将域名替换为你已配置的实际 HTTPS 地址。
-sudo python3 scripts/deploy-web.py "$commit" --install --public-url https://mihomo.example.invalid
+sudo python3 scripts/deploy-web.py --install --public-url https://mihomo.example.invalid
 ```
 
-默认 password 模式交互设置管理员密码；external 模式不询问、不生成 Web 密码。两种模式都自动生成独立摘要令牌，只写服务器私有配置。安装后 Web 保持关闭、不设自启。先前存在自定义 unit/drop-in、安装残留或符号链接目录时工具会拒绝覆盖，需要先核对。
+默认 password 模式交互设置管理员密码；external 模式不询问、不生成 Web 密码。两种模式都自动生成独立摘要令牌，只写服务器私有配置。安装后 Web 保持关闭、不设自启。已有 Web 服务或私有配置时拒绝重复初装；安装失败直接报告，不自动恢复。
 
 在 TUI 首页选择“开启 Web”，或：
 
@@ -83,8 +82,8 @@ mihomo-tui web stop
 已使用 Cloudflare Zero Trust / Access 保护该站点时，首次安装显式选择 external：
 
 ```bash
-commit=$(git rev-parse HEAD)
-sudo python3 scripts/deploy-web.py "$commit" --install \
+./scripts/build-web.sh
+sudo python3 scripts/deploy-web.py --install \
   --public-url https://mihomo.example.invalid --auth-mode external
 ```
 
@@ -92,7 +91,7 @@ sudo python3 scripts/deploy-web.py "$commit" --install \
 
 external 明确把访问者认证交给前置网关，本项目不再次校验 Access JWT，不从可伪造的身份请求头认定用户；所有能够到达本机源站的访问者均视为受信任操作员。Web 继续只监听回环地址，保留 HTTPS 公开 Host、同源 Origin、会话 Cookie、CSRF 和只读摘要令牌隔离。应用内会话用于请求校验与日志生命周期，不代表另一层用户登录。
 
-管理器与 Web 必须都支持 auth_mode 配置。首次使用 external 前，从同一提交构建两份程序，并按原流程升级 manager／TUI；旧 manager 不认识该字段，不能只更新 Web 再使用首页开关。
+管理器与 Web 必须都支持 auth_mode 配置；首次使用 external 前先用当前代码更新管理器。日常部署会从当前工作区一起构建已安装的 Web 与管理器。
 
 ## 复用 Cloudflare Tunnel
 
@@ -127,36 +126,19 @@ JSON 拒绝未知字段；模板不含真实凭据。初始安装器生成全部
 
 配置通过 `--config` 指定；第一版使用受控 JSON，替代方案阶段拟定的一组环境变量，不解析不必要的代理身份头，也不设置未使用的签名密钥。修改密码后重启 Web 以撤销旧会话；可以通过发布程序的 `--hash-password` 从标准输入生成哈希，避免在命令参数中放密码。更改配置时保留备份并校验 JSON、权限和公开入口。
 
-## 日常统一升级
-
-已安装 Web 后，推荐使用主部署入口。先从同一个干净提交准备 TUI／管理器和 Web 包，然后只执行一次部署：
+## 日常快速更新
 
 ~~~bash
-./scripts/build-release.sh
-./scripts/build-web.sh
-commit=$(git rev-parse HEAD)
-python3 scripts/deploy.py "$commit" --check
-sudo python3 scripts/deploy.py "$commit"
+./scripts/deploy.sh
 ~~~
 
-已有对应构建时复用即可，不重复构建。主入口自动发现已安装的 Web，并在管理器维护前核验同提交 Web 包；正式部署还预检私有配置。先完成管理器升级，再调用 Web 子工具，保留网页配置和开关状态。主入口 --skip-web 可明确跳过 Web。
+用普通用户执行，构建成功后才申请 sudo。不传提交号、不必提前提交或手动构建。脚本一起构建当前 TUI／管理器及已安装的 Web，并更新固定运行目录。
 
-两个阶段各自备份与恢复：Web 失败不会撤销成功的管理器升级，按错误信息修复后可重跑同一命令。没有安装 Web 的服务器不自动安装；首次安装仍需以下专用工具提供域名与认证方式。
+Web 原来运行则停止后更新，管理器重启完成后重新启动 Web；原来关闭则保持关闭。配置、域名、认证方式和服务自启设置保留。仅当 Web unit 文件内容变化时执行 daemon-reload。不停止或更新 Mihomo 内核。
 
-## 单独升级与回退
+没有部署备份、快照、自动回滚或外网代理检查。构建失败不更新服务；替换或启动失败直接输出错误与相关服务日志，修复后重新执行。启动成功只表示服务 active，公网与业务接口按需另行验证。Web 重启会使应用内会话失效。
 
-```bash
-./scripts/build-web.sh
-commit=$(git rev-parse HEAD)
-python3 scripts/deploy-web.py "$commit" --check
-sudo python3 scripts/deploy-web.py "$commit"
-# 恢复路径使用本次部署实际输出值。
-sudo python3 scripts/deploy-web.py --rollback /home/server/backups/mihomo-loongnix/实际-web-备份目录
-```
-
-工具先核验文件清单与程序来源、候选配置和静态资源，再按原 Web 运行状态停止 Web 并备份 unit、私有配置、状态、发布指向；代理双服务完全不参与。发布包整体原子切换 current，旧进程不跨版本读取资源。原来关闭的 Web 升级后仍关闭，原来运行则重新启动并检查本机健康。失败恢复旧配置、发布指向和运行／自启状态，失败数据另存备份。CLI 与管理器启停共享 Web 部署锁，避免同时操作。
-
-备份在集中 backups/mihomo-loongnix/ 下，root 私有。会话在 Web 重启后失效。首次失败可能保留新建的服务账号及未使用发布目录，便于检查，不影响代理；不自动删除历史备份。工具不处理自定义 unit、强制断电、磁盘损坏等所有恢复情况。--check 和模拟测试不代表真实 root 安装、HTTPS 登录及回退已验收；本机健康只验证 Web 进程，代理健康单独看状态。
+第一次快速更新把 /opt/mihomo-web/current 指向固定 runtime，不删除旧 releases 或集中历史备份。新脚本不再通过旧部署记录确认当前源码，也不提供回退参数。首次安装仍使用上面的 Web 初装命令。
 
 ## Homepage 连接
 
@@ -166,4 +148,4 @@ sudo python3 scripts/deploy-web.py --rollback /home/server/backups/mihomo-loongn
 - widget 每 10 秒刷新；平铺 JSON 字段与 [Web API](WEB_API.zh-CN.md#homepage-摘要) 一致。没有跨项目数据库、源码或运行目录挂载。
 - Web 关闭后摘要也关闭，卡片显示网页不可用，不表示代理停止。HoloBot／Homepage 停止不影响此网页。
 
-当前已验证假数据下的登录、页面交互、节点切换／测速、日志、手机布局及 Go/Python 契约测试。首次生产安装、公开入口、真实服务账号、跨项目真实摘要与回退需要部署后验收，不能从假数据预览推定成功。
+当前已验证假数据下的登录、页面交互、节点切换／测速、日志、手机布局及 Go/Python 契约测试。首次生产安装、公开入口、真实服务账号与跨项目真实摘要需要安装后验收，不能从假数据预览推定成功。

@@ -1,431 +1,152 @@
 #!/usr/bin/env python3
-"""升级现有 Loongnix 双服务部署；已安装 Web 随同升级；不用于首次安装或替换 Mihomo 内核。"""
+"""从当前工作区构建并更新现有服务；不备份、不自动回滚。"""
 import argparse
-import datetime
-import fcntl
-import hashlib
-import http.client
-import json
 import os
 from pathlib import Path
-import pwd
-import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import time
-from urllib.parse import urlsplit
 
+ROOT = Path(__file__).resolve().parent.parent
+MANAGER = 'mihomo-manager.service'
+WEB = 'mihomo-web.service'
 TARGET = Path('/usr/local/bin/mihomo-tui')
-DATA = Path('/var/lib/mihomo-tui')
-SOCKET = '/run/mihomo-tui/daemon.sock'
-MANAGER, CORE = 'mihomo-manager.service', 'mihomo.service'
-BINARY = 'mihomo-tui-linux-loong64'
+WEB_RUNTIME = Path('/opt/mihomo-web/runtime')
+WEB_CURRENT = Path('/opt/mihomo-web/current')
+WEB_UNIT = Path('/etc/systemd/system/mihomo-web.service')
 
 
-def run(*args):
-    return subprocess.run(args, check=True, text=True, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, timeout=120).stdout
+def run(*command, capture=False):
+    return subprocess.run(command, check=True, text=True,
+                          stdout=subprocess.PIPE if capture else None,
+                          timeout=120).stdout
 
 
-def digest(path):
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for block in iter(lambda: f.read(1024 * 1024), b''):
-            h.update(block)
-    return h.hexdigest()
+def service_value(unit, field):
+    return run('systemctl', 'show', unit, '--property=' + field, '--value', capture=True).strip()
 
 
-def write_json(path, value):
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
-
-
-def verify_build(build):
-    """同时核对两份清单校验值与二进制中的真实构建信息。"""
-    commit = build.name
-    if not re.fullmatch(r'[0-9a-f]{40}', commit):
-        raise RuntimeError('构建目录名称必须是完整提交号')
-    entries = {}
-    for line in (build / 'SHA256SUMS').read_text().splitlines():
-        match = re.fullmatch(r'([0-9a-f]{64})  (mihomo-tui-linux-loong64|BUILD-INFO.txt)', line)
-        if not match or match[2] in entries:
-            raise RuntimeError('SHA256SUMS 格式不正确或存在重复条目')
-        entries[match[2]] = match[1]
-    if set(entries) != {BINARY, 'BUILD-INFO.txt'}:
-        raise RuntimeError('构建校验清单不完整')
-    for name, expected in entries.items():
-        if digest(build / name) != expected:
-            raise RuntimeError(f'构建文件校验失败：{name}')
-    metadata = run('go', 'version', '-m', str(build / BINARY))
-    settings = dict(re.findall(r'^\s*build\s+([^=\s]+)=(\S+)\s*$', metadata, re.M))
-    if any(settings.get(k) != v for k, v in {
-            'vcs.revision': commit, 'vcs.modified': 'false',
-            'GOOS': 'linux', 'GOARCH': 'loong64'}.items()):
-        raise RuntimeError('二进制提交、平台或干净构建标记不符')
-    if f'commit={commit}' not in (build / 'BUILD-INFO.txt').read_text().splitlines():
-        raise RuntimeError('构建说明中的提交号不符')
-    return entries[BINARY]
-
-
-class UnixHTTP(http.client.HTTPConnection):
-    def connect(self):
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(5)
-        self.sock.connect(SOCKET)
-
-
-def status():
-    c = UnixHTTP('localhost')
+def replace_binary(source, target):
+    # 正在运行的旧程序仍可读，避免覆盖可执行文件触发 Text file busy。
+    fd, name = tempfile.mkstemp(prefix='.' + target.name + '-', dir=target.parent)
+    os.close(fd)
+    temporary = Path(name)
     try:
-        c.request('GET', '/v1/status')
-        response = c.getresponse()
-        obj = json.loads(response.read())
-        if response.status != 200 or not obj.get('success'):
-            raise RuntimeError('管理器状态接口异常')
-        return obj['data']
+        shutil.copyfile(source, temporary)
+        temporary.chmod(0o755)
+        os.replace(temporary, target)
     finally:
-        c.close()
+        temporary.unlink(missing_ok=True)
 
 
-def services():
-    result = {}
-    for unit in [MANAGER, CORE]:
-        text = run('systemctl', 'show', unit, '-p', 'ActiveState', '-p', 'UnitFileState',
-                   '-p', 'ExecStart', '-p', 'FragmentPath', '-p', 'DropInPaths', '-p', 'MainPID')
-        result[unit] = dict(line.split('=', 1) for line in text.splitlines() if '=' in line)
-    return result
+def install_web_files(build):
+    WEB_RUNTIME.mkdir(parents=True, exist_ok=True, mode=0o755)
+    WEB_RUNTIME.parent.chmod(0o755)
+    replace_binary(build / 'mihomo-web', WEB_RUNTIME / 'mihomo-web-linux-loong64')
+    static = WEB_RUNTIME / 'static'
+    if static.exists():
+        shutil.rmtree(static)
+    shutil.copytree(build / 'static', static)
+    for path in [WEB_RUNTIME, *static.rglob('*'), static]:
+        path.chmod(0o755 if path.is_dir() else 0o644)
+    # 首次日常更新把旧 current 链接改到固定 runtime；历史版本不删除。
+    link = WEB_CURRENT.with_name('.current-' + str(os.getpid()))
+    try:
+        link.symlink_to(WEB_RUNTIME)
+        link.replace(WEB_CURRENT)
+    finally:
+        link.unlink(missing_ok=True)
+    template = build / 'mihomo-web.service'
+    changed = not WEB_UNIT.exists() or WEB_UNIT.read_bytes() != template.read_bytes()
+    if changed:
+        shutil.copyfile(template, WEB_UNIT)
+        WEB_UNIT.chmod(0o644)
+    return changed
 
 
-def service_paths(states):
-    """只支持项目标准双服务布局；不猜测自定义 unit 中数据和程序的位置。"""
-    expected = f'argv[]={TARGET} server -d {DATA} ;'
-    if expected not in states[MANAGER]['ExecStart']:
-        raise RuntimeError('管理器启动路径不是标准布局，请先核对 unit')
-    match = re.search(r'path=([^;]+?)\s*;', states[CORE]['ExecStart'])
-    if not match:
-        raise RuntimeError('无法确认实际 Mihomo 内核路径')
-    core = Path(match[1])
-    if f'argv[]={core} -d {DATA} -f {DATA}/mihomo/config.yaml ;' not in states[CORE]['ExecStart']:
-        raise RuntimeError('内核启动参数不是标准布局，请先核对 unit')
-    paths = [DATA, TARGET, core]
-    for state in states.values():
-        paths.append(Path(state['FragmentPath']))
-        paths.extend(Path(p) for p in state['DropInPaths'].split())
-    for path in paths:
-        if not path.is_absolute() or path.is_symlink() or not path.exists():
-            raise RuntimeError(f'部署路径不存在或为符号链接，需先核对：{path}')
-    return core, list(dict.fromkeys(str(p).lstrip('/') for p in paths))
+def check_started(unit):
+    if service_value(unit, 'ActiveState') != 'active':
+        raise RuntimeError(unit + ' 未启动成功')
 
 
-def probe(port, args, events):
-    for scheme in ['http', 'socks5h']:
-        for attempt in range(1, 4):
-            try:
-                code = run('curl', '--silent', '--show-error', '--connect-timeout', '8',
-                           '--max-time', '20', '--noproxy', '', '--proxy',
-                           f'{scheme}://127.0.0.1:{port}', '--output', '/dev/null',
-                           '--write-out', '%{http_code}', args.probe_url)
-                error = '' if code == str(args.probe_status) else f'HTTP 状态码 {code}'
-                exit_code = 0
-            except subprocess.CalledProcessError as exc:
-                code, exit_code = exc.stdout or '', exc.returncode
-                error = (exc.stderr or str(exc)).strip()
-            events.append(dict(protocol=scheme, attempt=attempt, http_status=code,
-                               exit_code=exit_code, error=error))
-            if not error:
-                break
-            print(f'{scheme} 检查 {attempt}/3 未通过：{error}', flush=True)
-            if attempt < 3:
-                time.sleep(3 * attempt)
+def report_failure(exc):
+    print('更新失败：' + str(exc) + '。未执行自动恢复。', file=sys.stderr, flush=True)
+    # 打印本次相关服务的日志，不读取订阅或配置文件。
+    try:
+        run('journalctl', '-u', MANAGER, '-u', WEB, '-n', '40', '--no-pager')
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def install_built(build, with_web):
+    web_running = with_web and service_value(WEB, 'ActiveState') == 'active'
+    print('构建已完成，开始替换程序。', flush=True)
+    if web_running:
+        run('systemctl', 'stop', WEB)
+    replace_binary(build / 'mihomo-tui', TARGET)
+    if with_web:
+        if install_web_files(build):
+            print('Web 服务文件有变化，重载服务配置……', flush=True)
+            run('systemctl', 'daemon-reload')
         else:
-            raise RuntimeError(f'{scheme} 代理连续三次验证失败：{error}')
+            print('Web 服务文件未变化，跳过重载。', flush=True)
+    print('重启管理器……', flush=True)
+    run('systemctl', 'restart', MANAGER)
+    check_started(MANAGER)
+    if web_running:
+        print('启动 Web……', flush=True)
+        run('systemctl', 'start', WEB)
+        check_started(WEB)
+    elif with_web:
+        print('Web 已更新，保持关闭。', flush=True)
+    print('更新完成。', flush=True)
 
 
-def comparable_status(value):
-    return (value['proxy_port'], (value.get('active_profile') or {}).get('id'),
-            tuple(value['tun'].get(k) for k in
-                  ['configured', 'enabled', 'runtime_enabled', 'interface_present']))
+def deploy(build_only=False):
+    if os.geteuid() == 0:
+        raise RuntimeError('请直接运行 ./scripts/deploy.sh，不要在前面加 sudo；构建完成后会申请权限')
+    if service_value(MANAGER, 'LoadState') != 'loaded':
+        raise RuntimeError('请先按 README 安装管理器服务')
+    with_web = service_value(WEB, 'LoadState') == 'loaded'
+    command = [str(ROOT / 'scripts/build-current.sh')]
+    if with_web:
+        command.append('--web')
+    # 所有构建成功后才启动提权安装；构建失败不接触正式服务。
+    subprocess.run(command, cwd=ROOT, check=True)
+    build = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'mihomo-loongnix/build/current'
+    if build_only:
+        print('仅构建完成，未更新服务。', flush=True)
+        return
+    command = ['sudo', sys.executable, str(Path(__file__).resolve()),
+               '--install-built', str(build.resolve())]
+    if with_web:
+        command.append('--web')
+    subprocess.run(command, check=True)
 
 
-def exec_start_config(value):
-    # systemctl 的 ExecStart 同时包含配置与运行记录。重启会改变时间、
-    # PID 和退出状态，比较这些字段会把正常升级和正常回滚都误判为失败。
-    match = re.fullmatch(
-        r'\{\s*path=(.*?)\s*;\s*argv\[\]=(.*?)\s*;\s*ignore_errors=(yes|no)\s*(?:;.*)?\}',
-        value.strip(), re.S)
-    if not match:
-        raise RuntimeError('无法解析 ExecStart 的启动配置，需核对 systemd 输出')
-    return tuple(part.strip() for part in match.groups())
-
-
-def validate(before, original_states, args, events):
-    want_running = original_states[CORE]['ActiveState'] == 'active'
-    last = None
-    for _ in range(30):
-        try:
-            now = status()
-            if now['core']['running'] == want_running and now['core']['service_active'] == want_running:
-                break
-        except Exception as exc:
-            last = exc
-        time.sleep(1)
-    else:
-        raise RuntimeError('管理器或内核未恢复到升级前状态') from last
-    current = services()
-    for unit in [MANAGER, CORE]:
-        for key in ['ActiveState', 'UnitFileState', 'FragmentPath', 'DropInPaths']:
-            if current[unit][key] != original_states[unit][key]:
-                raise RuntimeError(f'{unit} 的 {key} 与升级前不一致')
-        if exec_start_config(current[unit]['ExecStart']) != exec_start_config(original_states[unit]['ExecStart']):
-            raise RuntimeError(f'{unit} 的启动命令与升级前不一致')
-    if comparable_status(now) != comparable_status(before):
-        raise RuntimeError('配置、端口或 TUN 状态与升级前不一致')
-    if want_running:
-        probe(now['proxy_port'], args, events)
-    return now
-
-
-def replace(source, target=TARGET):
-    fd, name = tempfile.mkstemp(prefix='.mihomo-install-', dir=target.parent)
-    temp = Path(name)
-    try:
-        with os.fdopen(fd, 'wb') as out, open(source, 'rb') as src:
-            shutil.copyfileobj(src, out)
-            out.flush()
-            os.fsync(out.fileno())
-        os.chmod(temp, 0o755)
-        os.replace(temp, target)
-    finally:
-        temp.unlink(missing_ok=True)
-
-
-def resume(states):
-    # 内核原本关闭时保持关闭；不修改开机启用状态。
-    if states[CORE]['ActiveState'] == 'active':
-        run('systemctl', 'start', CORE)
-    run('systemctl', 'start', MANAGER)
-
-
-def diagnostics(backup, exc, events, name='failure'):
-    # 保存错误本身失败时，仍必须继续回滚。
-    try:
-        write_json(backup / (name + '.json'), dict(error=str(exc),
-                   stderr=getattr(exc, 'stderr', None), proxy_checks=events))
-        (backup / ('journal-' + name + '.txt')).write_text(run(
-            'journalctl', '-u', MANAGER, '-u', CORE, '-n', '150', '--no-pager'))
-    except Exception:
-        print('部分诊断文件未能保存，继续恢复服务。', file=sys.stderr)
-
-
-def rollback(backup, archive, installed, states):
-    if installed:
-        run('systemctl', 'stop', MANAGER, CORE)
-        # 留存失败现场；同一父目录内重命名，不删除新版本写入的数据。
-        failed = DATA.with_name('mihomo-tui.failed-' + backup.name)
-        DATA.rename(failed)
-        run('tar', '--acls', '--xattrs', '-xpf', str(archive), '-C', '/', str(DATA).lstrip('/'))
-        replace(backup / 'old-program')
-        (backup / 'failed-state-location.txt').write_text(str(failed) + '\n')
-    resume(states)
-
-
-def deploy(build, expected, before, states, core, files, args, caller, events):
-    os.umask(0o077)
-    args.backup_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
-    backup = Path(tempfile.mkdtemp(prefix=stamp+'-deploy-'+build.name[:7]+'-', dir=args.backup_root))
-    archive = backup / 'before-deploy.tar'
-    old_hash = digest(TARGET)
-    core_hash = digest(core)
-    write_json(backup / 'services-before.json', states)
-    write_json(backup / 'status-before.json', before)
-    (backup / 'core-version.txt').write_text(run(str(core), '-v'))
-    shutil.copy2(TARGET, backup / 'old-program')
-    shutil.copy2(build / BINARY, backup / 'new-program')
-    shutil.copy2(build / 'BUILD-INFO.txt', backup / 'new-build.txt')
-    if digest(backup / 'old-program') != old_hash or digest(backup / 'new-program') != expected:
-        raise RuntimeError('暂存程序校验失败，尚未停止服务')
-    record = Path(caller.pw_dir) / '.local/share/mihomo-loongnix/current-deployment.json'
-    if record.exists():
-        shutil.copy2(record, backup / 'previous-deployment.json')
-    stopped = installed = False
-    try:
-        if comparable_status(status()) != comparable_status(before):
-            raise RuntimeError('预检查后运行配置发生变化，请重新检查')
-        if digest(TARGET) != old_hash or digest(core) != core_hash:
-            raise RuntimeError('正式程序在预检查后发生变化')
-        print('开始维护：暂停双服务并制作完整快照。', flush=True)
-        stopped = True
-        run('systemctl', 'stop', MANAGER, CORE)
-        run('tar', '--acls', '--xattrs', '-cpf', str(archive), '-C', '/', *files)
-        run('tar', '--acls', '--xattrs', '-df', str(archive), '-C', '/')
-        (backup / 'SHA256SUMS').write_text(digest(archive) + '  before-deploy.tar\n')
-        installed = True
-        replace(backup / 'new-program')
-        if digest(TARGET) != expected:
-            raise RuntimeError('安装后的程序校验失败')
-        resume(states)
-        after = validate(before, states, args, events)
-        if digest(core) != core_hash:
-            raise RuntimeError('Mihomo 内核意外变化')
-        write_json(backup / 'status-after.json', after)
-        write_json(backup / 'proxy-checks.json', events)
-        (backup / 'journal-after.txt').write_text(run('journalctl', '-u', MANAGER, '-u', CORE, '-n', '100', '--no-pager'))
-        receipt = dict(recorded_at=datetime.datetime.now().astimezone().isoformat(),
-                       status='deployed-and-verified', commit=build.name, binary_sha256=expected,
-                       previous_binary_sha256=old_hash, core_sha256=core_hash, backup=str(backup),
-                       proxy_checked=states[CORE]['ActiveState'] == 'active')
-        write_json(backup / 'deployment.json', receipt)
-        record.parent.mkdir(parents=True, exist_ok=True)
-        fd, name = tempfile.mkstemp(prefix='.deployment-', dir=record.parent)
-        try:
-            with os.fdopen(fd, 'w') as out:
-                json.dump(receipt, out, ensure_ascii=False, indent=2)
-            os.chown(name, caller.pw_uid, caller.pw_gid)
-            os.replace(name, record)
-        finally:
-            Path(name).unlink(missing_ok=True)
-    except BaseException as exc:
-        diagnostics(backup, exc, events)
-        print(f'升级未完成：{exc}\n恢复备份：{backup}', file=sys.stderr, flush=True)
-        if stopped:
-            try:
-                rollback(backup, archive, installed, states)
-                if digest(TARGET) != old_hash or digest(core) != core_hash:
-                    raise RuntimeError('恢复后的程序或内核校验不一致')
-                validate(before, states, args, events)
-                print('原程序、服务状态与连通性已验证恢复。', file=sys.stderr)
-            except BaseException as recovery_error:
-                print(f'自动恢复未验证成功：{recovery_error}\n请依据备份人工恢复：{backup}', file=sys.stderr)
-                diagnostics(backup, recovery_error, events, name='recovery-failure')
-                raise RuntimeError('升级失败且自动恢复未验证成功') from recovery_error
-        raise
-    print(f'部署完成：{build.name}\n恢复备份：{backup}', flush=True)
-
-
-def parse_args(argv=None):
-    caller = pwd.getpwnam(os.environ['SUDO_USER']) if os.environ.get('SUDO_USER') else pwd.getpwuid(os.getuid())
-    home = Path(caller.pw_dir)
+def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('commit', help='目标构建的完整提交号或唯一缩写（至少 7 位）')
-    parser.add_argument('--check', action='store_true', help='仅检查，不停止服务或写入运行数据')
-    parser.add_argument('--build-root', type=Path, default=home / '.local/share/mihomo-loongnix/builds', help='构建产物根目录')
-    parser.add_argument('--skip-web', action='store_true', help='仅升级 TUI／管理器，明确跳过 Web')
-    parser.add_argument('--web-build-root', type=Path, help='Web 构建根目录，默认在 build-root/web')
-    parser.add_argument('--backup-root', type=Path, default=home / 'backups/mihomo-loongnix', help='私有备份根目录')
-    parser.add_argument('--probe-url', default='https://cp.cloudflare.com/generate_204', help='HTTPS 连通性检查地址')
-    parser.add_argument('--probe-status', type=int, default=204, help='检查地址预期的 HTTP 状态码')
-    args = parser.parse_args(argv)
-    if not re.fullmatch(r'[0-9a-f]{7,40}', args.commit):
-        parser.error('提交号必须是 7 至 40 位小写十六进制字符')
-    url = urlsplit(args.probe_url)
-    if url.scheme != 'https' or not url.hostname or url.username or url.password or not 200 <= args.probe_status < 300:
-        parser.error('检查地址必须是无账号密码的 HTTPS URL，预期状态码必须为 2xx')
-    args.build_root = args.build_root.expanduser().resolve()
-    args.backup_root = args.backup_root.expanduser().resolve()
-    args.web_build_root = (args.web_build_root or args.build_root / 'web').expanduser().resolve()
-    return args, caller
-
-
-def prepare_web(build, args):
-    """在暂停代理前核验同提交 Web；子工具保留独立备份和回退。"""
-    if args.skip_web:
-        print('已指定跳过 Web。', flush=True)
-        return None
-    fields = dict(line.split('=', 1) for line in run(
-        'systemctl', 'show', 'mihomo-web.service', '-p', 'LoadState').splitlines() if '=' in line)
-    if fields.get('LoadState') == 'not-found':
-        print('未安装 Web，本次仅升级 TUI／管理器。', flush=True)
-        return None
-    if fields.get('LoadState') != 'loaded':
-        raise RuntimeError('Web 服务配置异常，请先核对；尚未升级任何组件')
-    command = [sys.executable, str(Path(__file__).with_name('deploy-web.py')),
-               build.name, '--build-root', str(args.web_build_root)]
-    print('检查同提交 Web 发布包' + ('。' if args.check else '与私有配置。'), flush=True)
-    subprocess.run(command + ['--check' if args.check else '--preflight'], check=True)
-    return command
-
-
-def finish_web(command):
-    if command is None:
-        return
-    print('TUI／管理器阶段已完成，开始更新 Web。', flush=True)
-    try:
-        subprocess.run(command, check=True)
-    except (subprocess.CalledProcessError, KeyboardInterrupt) as exc:
-        raise RuntimeError('Web 阶段未完成；TUI／管理器已处于目标版本。'
-                           'Web 恢复结果以以上输出为准；修复后可重跑同一部署命令，'
-                           '相同管理器构建不会再次重启。') from exc
-    print('统一部署完成：TUI／管理器与 Web 均已完成。', flush=True)
-
-
-def execute(args, caller):
-    if os.uname().machine not in ['loongarch64', 'loong64']:
-        raise RuntimeError('本部署脚本目前仅支持 LoongArch Linux 服务器')
-    for parent in [DATA, Path(__file__).resolve().parents[1]]:
-        if args.backup_root == parent or parent in args.backup_root.parents:
-            raise RuntimeError('备份目录必须位于正式数据和源码目录之外')
-    matches = [p for p in args.build_root.glob(args.commit+'*') if re.fullmatch(r'[0-9a-f]{40}', p.name) and p.is_dir()]
-    if len(matches) != 1:
-        raise RuntimeError('找不到唯一的已构建提交，请先构建或使用完整提交号')
-    build = matches[0]
-    expected = verify_build(build)
-    web_command = prepare_web(build, args)
-    states = services()
-    if states[MANAGER]['ActiveState'] != 'active' or states[CORE]['ActiveState'] not in ['active', 'inactive']:
-        raise RuntimeError('要求管理器运行且内核处于稳定的运行或关闭状态')
-    core, files = service_paths(states)
-    if not args.check:
-        # root 部署时同时核对正在运行的进程，避免磁盘文件已换、进程仍是旧版。
-        for unit, binary in [(MANAGER, TARGET), (CORE, core)]:
-            if states[unit]['ActiveState'] == 'active':
-                process = Path('/proc') / states[unit]['MainPID'] / 'exe'
-                if digest(process) != digest(binary):
-                    raise RuntimeError(f'{unit} 的运行程序与磁盘文件不一致，请先核对来源')
-    before = status()
-    running = states[CORE]['ActiveState'] == 'active'
-    if before['core']['running'] != running or before['core']['service_active'] != running:
-        raise RuntimeError('当前内核或控制接口异常，请先处理现有故障')
-    if before['tun']['configured'] or before['tun']['enabled']:
-        raise RuntimeError('请先通过 TUI 关闭 TUN，再执行标准升级')
-    events = []
-    if running:
-        probe(before['proxy_port'], args, events)
-    if args.check:
-        print('预检查通过；尚未制作正式备份，未修改程序或服务。')
-        return
-    if digest(TARGET) == expected:
-        print('TUI／管理器已安装相同构建，跳过替换。', flush=True)
-        finish_web(web_command)
-        return
-    deploy(build, expected, before, states, core, files, args, caller, events)
-    finish_web(web_command)
-
-
-def main(argv=None):
-    args, caller = parse_args(argv)
-    if args.check:
-        execute(args, caller)
-        return
-    if os.geteuid() != 0:
-        raise RuntimeError('部署需要 sudo；只读预检查可使用 --check')
-    # 阻止两个部署进程同时修改服务和快照。
-    fd = os.open('/run/lock/mihomo-loongnix-deploy.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, 'w') as lock:
+    parser.add_argument('--build-only', action='store_true', help='只构建当前代码，不替换或重启服务')
+    parser.add_argument('--install-built', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--web', action='store_true', help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    if args.install_built:
+        if os.geteuid() != 0:
+            parser.error('内部安装步骤需要 sudo')
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise RuntimeError('已有部署任务运行，请等待其完成')
-        execute(args, caller)
+            install_built(args.install_built, args.web)
+        except (Exception, KeyboardInterrupt) as exc:
+            report_failure(exc)
+            return 1
+    else:
+        try:
+            deploy(args.build_only)
+        except (Exception, KeyboardInterrupt) as exc:
+            print('操作未完成：' + str(exc), file=sys.stderr)
+            return 1
+    return 0
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    except (Exception, KeyboardInterrupt) as exc:
-        print(f'错误：{exc}', file=sys.stderr)
-        if getattr(exc, 'stderr', None):
-            print(exc.stderr.strip(), file=sys.stderr)
-        sys.exit(1)
+    sys.exit(main())
