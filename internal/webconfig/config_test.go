@@ -25,3 +25,23 @@ func TestConfigurationBoundaries(t *testing.T) {
 		}
 	}
 }
+
+func TestExternalAuthenticationIsExplicitAndHasNoPassword(t *testing.T) {
+	c := Config{Listen: "127.0.0.1:9080", PublicURL: "https://example.com", ManagerSocket: ProductionSocket, SummaryToken: strings.Repeat("x", 32)}
+	if c.Validate() == nil {
+		t.Fatal("an omitted auth mode must still require a password")
+	}
+	c.AuthMode = "external"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c.PasswordHash = "unused-password"
+	if c.Validate() == nil {
+		t.Fatal("external configuration should not retain a password")
+	}
+	c.PasswordHash = ""
+	c.AuthMode = "typo"
+	if c.Validate() == nil {
+		t.Fatal("unknown auth mode accepted")
+	}
+}

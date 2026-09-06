@@ -379,7 +379,7 @@ WebStatus 示例（虚构）：
 {"success":true,"data":{"installed":true,"configured":true,"state":"stopped","service_active":false,"healthy":false,"running":false,"public_url":"https://mihomo.example.invalid","observed_at":"2026-09-06T00:00:00Z"}}
 ```
 
-installed 表示 unit 和程序／静态产物存在；configured 表示正式私有配置有效。state 枚举 not_installed/stopped/starting/running/stopping/failed/unknown。service_active 为 systemd 实际状态，healthy 要求本机健康响应的 app 与 PID 匹配正在运行的 Web unit，running 同时要求服务活动和健康。public_url 可空，error_code/message 可选，不返回配置路径、密码哈希或令牌。生产网页配置不允许 test_mode。
+installed 表示 unit 和程序／静态产物存在；configured 表示正式私有配置有效。state 枚举 not_installed/stopped/starting/running/stopping/failed/unknown。service_active 为 systemd 实际状态，healthy 要求本机健康响应的 app 与 PID 匹配正在运行的 Web unit，running 同时要求服务活动和健康。public_url 可空，error_code/message 可选，不返回配置路径、密码哈希或令牌。生产网页配置不允许 test_mode；支持 auth_mode=password/external，external 配置不需要密码哈希。该字段要求升级到支持外部认证的 manager，旧版本不能识别。
 
 错误仍保留 `success=false,error`，增加可选 `error_code`。403 由 IPC 鉴权返回；409 的 code 为 WEB_NOT_INSTALLED、WEB_NOT_CONFIGURED、PORT_IN_USE、BUSY；500 为 WEB_START_FAILED/WEB_STOP_FAILED；503/WEB_STATUS_UNAVAILABLE 表示无法查询或此环境没有控制器；504/RESULT_UNKNOWN 表示超时待确认。错误后回读状态，不能断言操作未执行。
 

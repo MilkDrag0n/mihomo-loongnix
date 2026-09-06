@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { api, authenticated, login, logout, session } from "./api/client";
+import {
+  api,
+  authenticated,
+  authMode,
+  detectAuthMode,
+  login,
+  logout,
+  session,
+} from "./api/client";
 import { notice, noticeError } from "./composables/useAction";
 const route = useRoute(),
   router = useRouter(),
@@ -31,7 +39,12 @@ async function signIn() {
   busy.value = true;
   error.value = "";
   try {
-    await login(password.value);
+    if (authMode.value === null) await detectAuthMode();
+    if (authMode.value === "external") await session();
+    else {
+      if (!password.value) return;
+      await login(password.value);
+    }
     if (route.path === "/login") await router.replace("/overview");
   } catch (e) {
     error.value = (e as Error).message;
@@ -57,8 +70,10 @@ function activity(e: Event) {
 }
 onMounted(async () => {
   try {
+    await detectAuthMode();
     await session();
-  } catch {
+  } catch (e) {
+    if (authMode.value !== "password") error.value = (e as Error).message;
   } finally {
     ready.value = true;
   }
@@ -85,24 +100,40 @@ watch(
     </div>
     <form class="login-card" @submit.prevent="signIn">
       <span class="eyebrow">你的网络，由你掌控</span>
-      <h1>欢迎回来。</h1>
-      <p class="muted">登录代理控制台，查看连接与管理节点。</p>
-      <label for="password">管理员密码</label
-      ><input
-        id="password"
-        v-model="password"
-        class="input input-bordered"
-        type="password"
-        required
-        autocomplete="current-password"
-        maxlength="1024"
-        placeholder="输入管理员密码"
-      />
+      <h1>{{ authMode === "password" ? "欢迎回来。" : "连接控制台" }}</h1>
+      <p class="muted">
+        {{
+          authMode === "password"
+            ? "登录代理控制台，查看连接与管理节点。"
+            : "通过外部访问验证后，无需额外的网页密码。"
+        }}
+      </p>
+      <template v-if="authMode === 'password'">
+        <label for="password">管理员密码</label
+        ><input
+          id="password"
+          v-model="password"
+          class="input input-bordered"
+          type="password"
+          required
+          autocomplete="current-password"
+          maxlength="1024"
+          placeholder="输入管理员密码"
+        />
+      </template>
       <p v-if="error" class="error" role="alert">{{ error }}</p>
       <button class="btn btn-primary" :disabled="busy">
-        {{ busy ? "正在登录…" : "进入控制台 →" }}
+        {{
+          busy
+            ? "正在连接…"
+            : authMode === "password"
+              ? "进入控制台 →"
+              : "重新连接"
+        }}
       </button>
-      <p class="login-note">使用服务器本机设置的密码</p>
+      <p v-if="authMode === 'password'" class="login-note">
+        使用服务器本机设置的密码
+      </p>
     </form>
     <span class="login-foot">Mihomo Loongnix · 代理管理</span>
   </main>
@@ -137,7 +168,13 @@ watch(
           >
             {{ theme === "dark" ? "浅色模式" : "深色模式" }}</button
           ><span class="avatar-dot">管</span
-          ><button class="btn btn-ghost btn-sm" @click="signOut">退出</button>
+          ><button
+            v-if="authMode === 'password'"
+            class="btn btn-ghost btn-sm"
+            @click="signOut"
+          >
+            退出
+          </button>
         </div>
       </header>
       <div class="page-content">

@@ -1,3 +1,5 @@
+> 实现更新：现已支持显式 external 外部认证模式，不再要求 Web 管理员密码；接口和部署行为以 docs/WEB_API.zh-CN.md、docs/WEB_INTEGRATION.zh-CN.md 为准。以下保留方案决策记录。
+
 # Mihomo Web 实施方案
 
 更新：2026-09-06。状态：首版代码与独立测试已完成，正式 Web 尚未安装；验证记录见 docs/WEB_VERIFICATION.zh-CN.md。本文保留原设计作为决策记录，当前接口与命令以 docs/MANAGER_API.zh-CN.md、docs/WEB_API.zh-CN.md、docs/WEB_INTEGRATION.zh-CN.md 为准。

@@ -4,11 +4,13 @@
 
 ## 连接、登录与权限
 
+认证方式由私有配置 auth_mode 决定：省略或 password 使用本地管理员密码；external 使用部署者已经配置的外部访问控制，不设置 Web 密码、不在本项目校验 Access JWT。external 将到达源站的访问者视为可信操作员，不解析身份头来赋予权限；公开入口的访问限制由外部网关负责。该模式仍要求会话 Cookie 和 CSRF，但它们只承担请求校验与日志生命周期管理。
+
 浏览器与网关同源访问 `/api/v1`，网关通过私有配置指定的 Unix socket 访问 `/v1`。正式 Web 只监听回环地址，由 HTTPS 入口转发；生产 Cookie 带 Secure、HttpOnly、SameSite=Lax、Path=/，不设置跨子域 Domain，名称为 `mihomo_web_session`。
 
-浏览器必须使用配置中的公开 Host；网关不采信调用者提供的 Forwarded 或 X-Forwarded-* 来决定身份、来源或限流。所有非 GET 浏览器请求要求 `Content-Type: application/json`，Origin 必须与公开入口完全相同；登录之外还要求 `X-CSRF-Token`。无参数 POST 发送 `{}`。不开启跨域 CORS。密码至少 12 字节，使用 PBKDF2-SHA256（600000 次、随机盐）验证，密码哈希只在服务器私有配置保存。
+浏览器必须使用配置中的公开 Host；网关不采信调用者提供的 Forwarded 或 X-Forwarded-* 来决定身份、来源或限流。所有非 GET 浏览器请求要求 `Content-Type: application/json`，Origin 必须与公开入口完全相同；登录之外还要求 `X-CSRF-Token`。无参数 POST 发送 `{}`。不开启跨域 CORS。password 模式的密码为 12—1024 字节，使用 PBKDF2-SHA256（600000 次、随机盐）验证，密码哈希只在服务器私有配置保存。
 
-服务器内存会话绝对期限 12 小时，空闲期限 30 分钟。普通查询、自动轮询和日志心跳不续期；前端真实操作最多每分钟调用一次 refresh。重启／关闭网关使会话失效。修改密码通过本机维护配置后重启网关完成，所有旧会话和日志连接随之撤销。单实例最多 16 个有效会话；登录总量最多每分钟 10 次，同时只验证一个密码。此限制不依赖可伪造的代理来源 IP，多人共享入口会共用额度。
+服务器内存会话绝对期限 12 小时，空闲期限 30 分钟。普通查询、自动轮询和日志心跳不续期；前端真实操作最多每分钟调用一次 refresh。重启／关闭网关使会话失效。修改密码通过本机维护配置后重启网关完成，所有旧会话和日志连接随之撤销。两种模式单实例均最多 16 个有效会话；password 模式登录总量最多每分钟 10 次，同时只验证一个密码。此限制不依赖可伪造的代理来源 IP，多人共享入口会共用额度。
 
 所有接口默认 `Cache-Control: no-store`。使用独立摘要 Bearer 令牌的请求即使同时携带管理员 Cookie，也不能访问其他浏览器 API。网页不暴露 `/v1/web/*`，不能关闭或启动自身。
 
@@ -32,7 +34,7 @@
 | 401 | UNAUTHORIZED | 未登录、会话失效、密码或摘要令牌错误 |
 | 403 | FORBIDDEN | Host、Origin、CSRF、身份或令牌范围不匹配 |
 | 404 | NOT_FOUND | 路由／方法或上游资源不存在 |
-| 405 | INVALID_INPUT | 登录、会话、日志、健康检查等明确路由使用了错误方法 |
+| 405 | INVALID_INPUT / PASSWORD_LOGIN_DISABLED | 明确路由的方法错误；或 external 模式调用密码登录 |
 | 409 | BUSY / CONFLICT | 网页已有操作，或管理器报告状态冲突 |
 | 429 | RATE_LIMITED | 登录验证繁忙、尝试频率或会话数量达到上限 |
 | 502 | UPSTREAM_UNAVAILABLE | 管理器连接失败、返回格式异常或未分类上游失败 |
@@ -46,12 +48,15 @@
 
 | 方法与路径 | 请求 | data |
 | --- | --- | --- |
-| POST /api/v1/auth/login | `{"password":"演示密码，不是真实凭据"}`；仍要求 Origin 和 JSON | user、csrf_token；同时设置 Cookie |
-| GET /api/v1/auth/session | 登录 Cookie | user、csrf_token、permissions（read/operate） |
+| GET /api/v1/auth/mode | 无 Cookie 也可读取；仍检查公开 Host | auth_mode（password/external） |
+| POST /api/v1/auth/login | password 模式：`{"password":"演示密码，不是真实凭据"}`；仍要求 Origin 和 JSON | user、csrf_token、auth_mode；设置 Cookie；external 模式返回 405 |
+| GET /api/v1/auth/session | password 要求有效 Cookie；external 可自动建立新会话 | user、csrf_token、permissions（read/operate）、auth_mode |
 | POST /api/v1/auth/refresh | `{}`、Cookie、CSRF | `{"refreshed":true}`；只延长空闲期 |
 | POST /api/v1/auth/logout | `{}`、Cookie、CSRF | `{"logged_out":true}`；撤销当前会话，关闭其日志连接 |
 | GET /api/v1/capabilities | 登录 Cookie | schema_version、actions、web_lifecycle=false、delay_concurrency=1 |
 | GET /healthz | 无认证，仅本服务健康信号 | 直接返回 `{"app":"mihomo-web","pid":1234}`，无 data 外层 |
+
+external 模式只有 GET /auth/session 可建立会话，其他业务接口不会自动放行无 Cookie 请求；会拒绝跨站来源的会话创建。摘要 Bearer 令牌也不能访问 /auth/mode 或申请浏览器会话。注销会撤销当前 Cookie 和日志连接，但不负责注销 Cloudflare 身份；仍通过外部访问控制的客户端再次请求 /auth/session 时可以获得新会话。网页不显示本地密码登录／退出按钮；会话过期时可以重新连接。
 
 capabilities 表示当前网关实现的映射，不证明旧 manager 的每个动作都存在。没有浏览器密码修改、账号管理或自启设置接口。`/healthz` 只用于本机验证 Web 进程，不表示代理内核或外网健康。
 

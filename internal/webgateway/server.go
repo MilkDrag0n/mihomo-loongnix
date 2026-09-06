@@ -123,11 +123,38 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		failure(w, 400, "INVALID_INPUT", "请求过大")
 		return
 	}
+	if r.URL.Path == "/api/v1/auth/mode" {
+		if r.Method != http.MethodGet {
+			failure(w, 405, "INVALID_INPUT", "方法不允许")
+			return
+		}
+		success(w, 200, map[string]string{"auth_mode": s.Config.AuthenticationMode()})
+		return
+	}
 	if r.URL.Path == "/api/v1/auth/login" {
+		if s.Config.AuthenticationMode() == "external" {
+			failure(w, 405, "PASSWORD_LOGIN_DISABLED", "此部署由外部网关认证，不使用 Web 密码")
+			return
+		}
 		s.login(w, r)
 		return
 	}
 	id, v := s.getSession(r)
+	if v == nil && s.Config.AuthenticationMode() == "external" &&
+		r.Method == http.MethodGet && r.URL.Path == "/api/v1/auth/session" {
+		// External mode explicitly delegates admission to the upstream access gateway.
+		// This cookie supplies CSRF protection and stream lifetime, not user identity.
+		if r.Header.Get("Sec-Fetch-Site") == "cross-site" ||
+			(r.Header.Get("Origin") != "" && r.Header.Get("Origin") != strings.TrimRight(s.Config.PublicURL, "/")) {
+			failure(w, 403, "FORBIDDEN", "请求来源无效")
+			return
+		}
+		var issued bool
+		id, v, issued = s.issueSession(w)
+		if !issued {
+			return
+		}
+	}
 	if v == nil {
 		failure(w, 401, "UNAUTHORIZED", "请重新登录")
 		return
@@ -142,7 +169,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			failure(w, 405, "INVALID_INPUT", "方法不允许")
 			return
 		}
-		success(w, 200, map[string]any{"user": "管理员", "csrf_token": v.CSRF, "permissions": []string{"read", "operate"}})
+		success(w, 200, map[string]any{"user": "管理员", "csrf_token": v.CSRF, "permissions": []string{"read", "operate"}, "auth_mode": s.Config.AuthenticationMode()})
 	case "/api/v1/auth/logout":
 		if r.Method != "POST" {
 			failure(w, 405, "INVALID_INPUT", "方法不允许")
@@ -286,6 +313,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		failure(w, 401, "UNAUTHORIZED", "密码不正确")
 		return
 	}
+	_, v, issued := s.issueSession(w)
+	if !issued {
+		return
+	}
+	success(w, 200, map[string]string{"csrf_token": v.CSRF, "user": "管理员", "auth_mode": "password"})
+}
+func (s *Server) issueSession(w http.ResponseWriter) (string, *session, bool) {
+	now := time.Now()
 	id := webconfig.RandomToken()
 	v := &session{CSRF: webconfig.RandomToken(), Created: now, Last: now, Done: make(chan struct{})}
 	s.mu.Lock()
@@ -298,12 +333,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if len(s.sessions) >= 16 {
 		s.mu.Unlock()
 		failure(w, 429, "RATE_LIMITED", "会话数量已达上限，请退出旧会话")
-		return
+		return "", nil, false
 	}
 	s.sessions[id] = v
 	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: id, Path: "/", MaxAge: 12 * 3600, HttpOnly: true, Secure: !s.Config.TestMode, SameSite: http.SameSiteLaxMode})
-	success(w, 200, map[string]string{"csrf_token": v.CSRF, "user": "管理员"})
+	copy := *v
+	return id, &copy, true
 }
 func (s *Server) upstream(ctx context.Context, method, path string, body io.Reader) (json.RawMessage, int, error) {
 	req, e := http.NewRequestWithContext(ctx, method, "http://manager"+path, body)

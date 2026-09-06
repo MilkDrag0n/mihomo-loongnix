@@ -100,5 +100,6 @@
 - 网页与现有 TUI／管理器生命周期分开；开关调用 /v1/web/*，不在 TUI 或网关内直接控制核心。
 - Web 代码在 web/、internal/webgateway/、cmd/mihomo-web/。使用 scripts/test-web.sh 独立验证，scripts/build-web.sh 从干净提交归档到 builds/web/<提交>/，scripts/deploy-web.py 独立发布。
 - 前端测试不依赖正式服务；preview-web.py 只使用假 Unix socket、测试配置和 19080 端口。TUI 普通测试不得缺省控制生产 Web unit。
+- 已有外部访问控制的部署可通过 --auth-mode external 初装，不再设置 Web 密码；不自行推断其他部署也要关闭密码。外部认证与应用内会话／CSRF 边界见接口文档。
 - 正式 Web 初装默认关闭、不设自启。变更 Web 不停代理双服务；所需 manager 升级仍单独使用原部署流程。
 - 发布前同步 docs/WEB_API.zh-CN.md、docs/MANAGER_API.zh-CN.md 和 docs/WEB_INTEGRATION.zh-CN.md，记录两端实际兼容提交、测试与真实部署验收边界。

@@ -81,92 +81,107 @@ func TestQuietUpstreamMayDelayHeadersPastFiveSeconds(t *testing.T) {
 }
 
 func TestHTTPSReverseProxyLoginWriteAndLogout(t *testing.T) {
-	var writes atomic.Int32
-	app := setup(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && r.URL.Path == "/v1/logging" {
-			writes.Add(1)
-		}
-		fmt.Fprint(w, "{\"success\":true,\"data\":{\"enabled\":true}}")
-	})
-	origin := httptest.NewServer(app)
-	defer origin.Close()
-	target, _ := url.Parse(origin.URL)
-	edge := httptest.NewUnstartedServer(httputil.NewSingleHostReverseProxy(target))
-	app.Config.PublicURL = "https://example.com"
-	app.Config.TestMode = false
-	if err := app.Config.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	edge.StartTLS()
-	defer edge.Close()
-	// Client trusts only the test server's generated certificate; TLS verification stays on.
-	client := edge.Client()
-	transport := client.Transport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, network, edge.Listener.Addr().String())
-	}
-	client.Transport = transport
-	defer client.CloseIdleConnections()
-	client.Timeout = 5 * time.Second
-	client.Jar, _ = cookiejar.New(nil)
-	csrf := ""
-	call := func(method, path, body string) *http.Response {
-		t.Helper()
-		r, err := http.NewRequest(method, app.Config.PublicURL+path, strings.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("Origin", app.Config.PublicURL)
-		r.Header.Set("X-CSRF-Token", csrf)
-		response, err := client.Do(r)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return response
-	}
-	login := call("POST", "/api/v1/auth/login", "{\"password\":\"test-only-password\"}")
-	if login.StatusCode != http.StatusOK {
-		login.Body.Close()
-		t.Fatalf("HTTPS login status = %d", login.StatusCode)
-	}
-	cookies := login.Cookies()
-	if len(cookies) != 1 || !cookies[0].Secure || !cookies[0].HttpOnly {
-		t.Fatal("production cookie flags missing")
-	}
-	var session struct {
-		Data struct {
-			CSRF string `json:"csrf_token"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(login.Body).Decode(&session); err != nil {
-		t.Fatal(err)
-	}
-	login.Body.Close()
-	httpURL, _ := url.Parse(strings.Replace(app.Config.PublicURL, "https://", "http://", 1))
-	if len(client.Jar.Cookies(httpURL)) != 0 {
-		t.Fatal("secure session would be sent over plain HTTP")
-	}
-	denied := call("PUT", "/api/v1/logging", "{\"enabled\":true}")
-	denied.Body.Close()
-	if denied.StatusCode != http.StatusForbidden || writes.Load() != 0 {
-		t.Fatal("write without CSRF reached manager")
-	}
-	csrf = session.Data.CSRF
-	applied := call("PUT", "/api/v1/logging", "{\"enabled\":true}")
-	applied.Body.Close()
-	if applied.StatusCode != http.StatusOK || writes.Load() != 1 {
-		t.Fatal("authenticated HTTPS write failed")
-	}
-	logout := call("POST", "/api/v1/auth/logout", "{}")
-	logout.Body.Close()
-	if logout.StatusCode != http.StatusOK {
-		t.Fatal("HTTPS logout failed")
-	}
-	after := call("GET", "/api/v1/auth/session", "")
-	after.Body.Close()
-	if after.StatusCode != http.StatusUnauthorized {
-		t.Fatal("session survived HTTPS logout")
+	for _, mode := range []string{"password", "external"} {
+		t.Run(mode, func(t *testing.T) {
+
+			var writes atomic.Int32
+			app := setup(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPut && r.URL.Path == "/v1/logging" {
+					writes.Add(1)
+				}
+				fmt.Fprint(w, "{\"success\":true,\"data\":{\"enabled\":true}}")
+			})
+			if mode == "external" {
+				app.Config.AuthMode = "external"
+				app.Config.PasswordHash = ""
+			}
+			origin := httptest.NewServer(app)
+			defer origin.Close()
+			target, _ := url.Parse(origin.URL)
+			edge := httptest.NewUnstartedServer(httputil.NewSingleHostReverseProxy(target))
+			app.Config.PublicURL = "https://example.com"
+			app.Config.TestMode = false
+			if err := app.Config.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			edge.StartTLS()
+			defer edge.Close()
+			// Client trusts only the test server's generated certificate; TLS verification stays on.
+			client := edge.Client()
+			transport := client.Transport.(*http.Transport).Clone()
+			transport.Proxy = nil
+			transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, edge.Listener.Addr().String())
+			}
+			client.Transport = transport
+			defer client.CloseIdleConnections()
+			client.Timeout = 5 * time.Second
+			client.Jar, _ = cookiejar.New(nil)
+			csrf := ""
+			call := func(method, path, body string) *http.Response {
+				t.Helper()
+				r, err := http.NewRequest(method, app.Config.PublicURL+path, strings.NewReader(body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				r.Header.Set("Content-Type", "application/json")
+				r.Header.Set("Origin", app.Config.PublicURL)
+				r.Header.Set("X-CSRF-Token", csrf)
+				response, err := client.Do(r)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return response
+			}
+			var login *http.Response
+			if mode == "external" {
+				login = call("GET", "/api/v1/auth/session", "")
+			} else {
+				login = call("POST", "/api/v1/auth/login", "{\"password\":\"test-only-password\"}")
+			}
+			if login.StatusCode != http.StatusOK {
+				login.Body.Close()
+				t.Fatalf("HTTPS login status = %d", login.StatusCode)
+			}
+			cookies := login.Cookies()
+			if len(cookies) != 1 || !cookies[0].Secure || !cookies[0].HttpOnly {
+				t.Fatal("production cookie flags missing")
+			}
+			var session struct {
+				Data struct {
+					CSRF string `json:"csrf_token"`
+				} `json:"data"`
+			}
+			if err := json.NewDecoder(login.Body).Decode(&session); err != nil {
+				t.Fatal(err)
+			}
+			login.Body.Close()
+			httpURL, _ := url.Parse(strings.Replace(app.Config.PublicURL, "https://", "http://", 1))
+			if len(client.Jar.Cookies(httpURL)) != 0 {
+				t.Fatal("secure session would be sent over plain HTTP")
+			}
+			denied := call("PUT", "/api/v1/logging", "{\"enabled\":true}")
+			denied.Body.Close()
+			if denied.StatusCode != http.StatusForbidden || writes.Load() != 0 {
+				t.Fatal("write without CSRF reached manager")
+			}
+			csrf = session.Data.CSRF
+			applied := call("PUT", "/api/v1/logging", "{\"enabled\":true}")
+			applied.Body.Close()
+			if applied.StatusCode != http.StatusOK || writes.Load() != 1 {
+				t.Fatal("authenticated HTTPS write failed")
+			}
+			logout := call("POST", "/api/v1/auth/logout", "{}")
+			logout.Body.Close()
+			if logout.StatusCode != http.StatusOK {
+				t.Fatal("HTTPS logout failed")
+			}
+			after := call("GET", "/api/v1/status", "")
+			after.Body.Close()
+			if after.StatusCode != http.StatusUnauthorized {
+				t.Fatal("session survived HTTPS logout")
+			}
+
+		})
 	}
 }

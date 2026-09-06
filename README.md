@@ -166,9 +166,9 @@ mihomo-loongnix/
 
 ## 后端与前端
 
-项目包含管理后端、TUI 和可选网页。网页采用 Vue 3 / TypeScript，通过独立 Go 网关与 TUI 共用同一个管理器；运行时不需要 Node。网页有概览、配置、节点、规则和日志五页，支持单管理员登录、深浅主题和手机布局。
+项目包含管理后端、TUI 和可选网页。网页采用 Vue 3 / TypeScript，通过独立 Go 网关与 TUI 共用同一个管理器；运行时不需要 Node。网页有概览、配置、节点、规则和日志五页，支持密码登录或由外部网关认证，以及深浅主题和手机布局。
 
-Web 默认关闭，独立安装、测试和升级。在 TUI 首页开启／关闭，或使用 `mihomo-tui web status|start|stop`。退出 TUI 不关闭 Web；关闭 Web 不影响代理，服务器重启后默认不开启。首次安装需要先准备 HTTPS 入口和管理员密码，不能仅运行开关命令。
+Web 默认关闭，独立安装、测试和升级。在 TUI 首页开启／关闭，或使用 `mihomo-tui web status|start|stop`。退出 TUI 不关闭 Web；关闭 Web 不影响代理，服务器重启后默认不开启。首次安装需要先准备 HTTPS 入口；已有 Cloudflare Zero Trust 访问保护时可选择 external 模式，不设置 Web 管理员密码，不能仅运行开关命令。
 
 网页构建与安装流程见 [网页接入指南](docs/WEB_INTEGRATION.zh-CN.md)。构建需要 Node >=22.12、pnpm 10.34.5；使用 `./scripts/test-web.sh` 独立测试、`./scripts/build-web.sh` 归档，安装／升级使用 `scripts/deploy-web.py`，不会停代理双服务。首次生产安装与回退须在实际环境验收；假数据预览不代表已部署。
 

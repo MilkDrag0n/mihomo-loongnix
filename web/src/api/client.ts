@@ -1,6 +1,7 @@
 import { ref } from "vue";
 export const csrf = ref("");
 export const authenticated = ref(false);
+export const authMode = ref<"password" | "external" | null>(null);
 export class APIError extends Error {
   constructor(
     public code: string,
@@ -33,14 +34,12 @@ export async function api<T>(
         : "结果待确认，请刷新状态，不要重复提交",
     );
   }
-  const payload = await response
-    .json()
-    .catch(() => ({
-      error: {
-        code: "INVALID_RESPONSE",
-        message: "网页服务返回异常，请稍后刷新",
-      },
-    }));
+  const payload = await response.json().catch(() => ({
+    error: {
+      code: "INVALID_RESPONSE",
+      message: "网页服务返回异常，请稍后刷新",
+    },
+  }));
   if (!response.ok) {
     if (response.status === 401) {
       authenticated.value = false;
@@ -52,6 +51,12 @@ export async function api<T>(
     );
   }
   return payload.data as T;
+}
+export async function detectAuthMode() {
+  const result = await api<{ auth_mode: string }>("/auth/mode");
+  if (result.auth_mode !== "password" && result.auth_mode !== "external")
+    throw new APIError("INVALID_RESPONSE", "网页认证配置不可用");
+  authMode.value = result.auth_mode;
 }
 export async function session() {
   const result = await api<{ csrf_token: string }>("/auth/session");

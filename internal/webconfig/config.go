@@ -22,6 +22,7 @@ const ProductionPath = "/etc/mihomo-web/config.json"
 const ProductionSocket = "/run/mihomo-tui/daemon.sock"
 
 type Config struct {
+	AuthMode      string `json:"auth_mode,omitempty"`
 	Listen        string `json:"listen"`
 	PublicURL     string `json:"public_url"`
 	ManagerSocket string `json:"manager_socket"`
@@ -47,6 +48,14 @@ func Load(path string) (Config, error) {
 		return c, fmt.Errorf("Web 配置包含多余内容")
 	}
 	return c, c.Validate()
+}
+
+// AuthenticationMode preserves password authentication for existing configurations.
+func (c Config) AuthenticationMode() string {
+	if c.AuthMode == "" {
+		return "password"
+	}
+	return c.AuthMode
 }
 func (c Config) Validate() error {
 	host, port, e := net.SplitHostPort(c.Listen)
@@ -74,8 +83,17 @@ func (c Config) Validate() error {
 	if len(c.SummaryToken) < 32 {
 		return fmt.Errorf("摘要令牌至少 32 字符")
 	}
-	if _, _, e = decodeHash(c.PasswordHash); e != nil {
-		return e
+	switch c.AuthenticationMode() {
+	case "password":
+		if _, _, e = decodeHash(c.PasswordHash); e != nil {
+			return e
+		}
+	case "external":
+		if c.PasswordHash != "" {
+			return fmt.Errorf("外部认证模式不使用 Web 密码，请移除 password_hash")
+		}
+	default:
+		return fmt.Errorf("auth_mode 必须为 password 或 external")
 	}
 	return nil
 }

@@ -63,3 +63,34 @@ class WebDeploymentTest(unittest.TestCase):
                 self.assertNotIn('mihomo-manager.service',c.args)
                 self.assertNotEqual(c.args[:2],('systemctl','start'))
         self.assertEqual(paths['CURRENT'].resolve(),old)
+
+
+class WebPasswordPromptTest(unittest.TestCase):
+    def test_invalid_length_never_reaches_hash_process(self):
+        for password in ('short', 'x' * 1025):
+            with self.subTest(length=len(password)), patch.object(web.getpass, 'getpass', return_value=password) as prompt, patch.object(web, 'run') as execute:
+                with self.assertRaisesRegex(ValueError, '12—1024') as error:
+                    web.prompt_password_hash(Path('/demo/mihomo-web'))
+                execute.assert_not_called()
+                self.assertEqual(prompt.call_count, 1)
+                self.assertNotIn(password, str(error.exception))
+
+    def test_mismatch_never_reaches_hash_process(self):
+        with patch.object(web.getpass, 'getpass', side_effect=['test-only-password', 'different-password']), patch.object(web, 'run') as execute:
+            with self.assertRaisesRegex(ValueError, '两次密码不同'):
+                web.prompt_password_hash(Path('/demo/mihomo-web'))
+            execute.assert_not_called()
+
+    def test_password_is_passed_only_via_standard_input(self):
+        password = 'test-only-password'
+        with patch.object(web.getpass, 'getpass', return_value=password), patch.object(web, 'run', return_value='demo-hash') as execute:
+            self.assertEqual(web.prompt_password_hash(Path('/demo/mihomo-web')), 'demo-hash')
+            execute.assert_called_once_with('/demo/mihomo-web', '--hash-password', input=password + '\n')
+
+
+class ExternalInstallationTest(unittest.TestCase):
+    def test_external_installation_does_not_prompt_or_generate_password(self):
+        with patch.object(web.getpass, 'getpass') as prompt, patch.object(web, 'run') as execute:
+            self.assertEqual(web.installation_password_hash(Path('/demo/mihomo-web'), 'external'), '')
+            prompt.assert_not_called()
+            execute.assert_not_called()

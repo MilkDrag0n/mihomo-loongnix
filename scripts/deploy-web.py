@@ -31,6 +31,21 @@ def run(*args, **kwargs):
                           stderr=subprocess.PIPE, **kwargs).stdout.strip()
 
 
+def installation_password_hash(binary, auth_mode):
+    if auth_mode == 'external':
+        return ''
+    return prompt_password_hash(binary)
+
+
+def prompt_password_hash(binary):
+    password = getpass.getpass('设置 Web 管理员密码（12—1024 字节）：')
+    if not 12 <= len(password.encode('utf-8')) <= 1024:
+        raise ValueError('Web 密码须为 12—1024 字节；英文字母、数字和常用英文符号每个占 1 字节。尚未安装 Web，请重新执行安装。')
+    if password != getpass.getpass('再次输入密码：'):
+        raise ValueError('两次密码不同；尚未安装 Web，请重新执行安装。')
+    return run(str(binary), '--hash-password', input=password + '\n')
+
+
 def digest(path):
     with path.open('rb') as f:
         hasher = hashlib.sha256()
@@ -169,9 +184,12 @@ def main():
     parser.add_argument('--check', action='store_true', help='只检查发布包；不启动服务')
     parser.add_argument('--install', action='store_true', help='首次可选安装，安装后保持关闭')
     parser.add_argument('--public-url', help='首次安装的 HTTPS 公开入口')
+    parser.add_argument('--auth-mode', choices=['password', 'external'], help='首次安装认证方式；external 使用现有外部访问控制，不设置 Web 密码')
     parser.add_argument('--rollback', type=Path, help='恢复本工具的备份目录')
     parser.add_argument('--build-root', type=Path, default=home / '.local/share/mihomo-loongnix/builds/web')
     args = parser.parse_args()
+    if args.auth_mode and not args.install:
+        raise ValueError('--auth-mode 仅用于首次安装；升级保留已有认证配置')
     if args.rollback:
         if args.commit or args.install or args.check:
             raise ValueError('回退不能与部署选项组合')
@@ -214,14 +232,11 @@ def main():
         public = urlsplit(args.public_url or '')
         if public.scheme != 'https' or not public.hostname or public.username or public.query or public.fragment or public.path not in ('', '/'):
             raise ValueError('首次安装需 --public-url https://实际域名')
-        password = getpass.getpass('设置 Web 管理员密码（至少 12 字节）：')
-        if password != getpass.getpass('再次输入密码：'):
-            raise ValueError('两次密码不同')
-        password_hash = run(str(build / BINARY), '--hash-password', input=password + '\n')
-        del password
+        auth_mode = args.auth_mode or 'password'
+        password_hash = installation_password_hash(build / BINARY, auth_mode)
         import secrets
         config_text = json.dumps({'listen': '127.0.0.1:9080', 'public_url': args.public_url.rstrip('/'),
-              'manager_socket': '/run/mihomo-tui/daemon.sock', 'password_hash': password_hash,
+              'manager_socket': '/run/mihomo-tui/daemon.sock', 'auth_mode': auth_mode, 'password_hash': password_hash,
               'summary_token': secrets.token_hex(32), 'show_node': False, 'test_mode': False}, indent=2)
     # 验证候选配置与静态资源后才进入维护；不连接正式 manager。
     with tempfile.TemporaryDirectory(prefix='mihomo-web-preflight-') as tmp:
