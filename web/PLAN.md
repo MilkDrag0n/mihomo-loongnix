@@ -287,7 +287,7 @@ internal/webgateway/        会话、白名单映射、日志转换、摘要
 deploy/web/                未来服务与环境模板
 scripts/build-web.sh       独立 Web 正式构建（拟新增）
 scripts/test-web.sh        独立 Web 检查（拟新增）
-scripts/deploy-web.py      独立 Web 安装／升级／回退（拟新增）
+scripts/deploy.sh          当前统一构建、更新与可选 Web 初装入口
 docs/WEB_API.zh-CN.md       浏览器接口契约（拟新增）
 ```
 

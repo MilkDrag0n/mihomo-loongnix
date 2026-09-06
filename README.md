@@ -161,7 +161,7 @@ mihomo-loongnix/
 
 Web 默认关闭，独立安装和测试；已安装后随当前代码一起快速更新。在 TUI 首页开启／关闭，或使用 `mihomo-tui web status|start|stop`。退出 TUI 不关闭 Web；关闭 Web 不影响代理，服务器重启后默认不开启。首次安装需要先准备 HTTPS 入口；已有 Cloudflare Zero Trust 访问保护时可选择 external 模式，不设置 Web 管理员密码，不能仅运行开关命令。
 
-网页构建与安装流程见 [网页接入指南](docs/WEB_INTEGRATION.zh-CN.md)。Web 构建需要 Node >=22.12、pnpm 10.34.5；使用 ./scripts/test-web.sh 独立测试。首次安装使用 scripts/deploy-web.py；日常只运行 ./scripts/deploy.sh。
+网页构建与安装流程见 [网页接入指南](docs/WEB_INTEGRATION.zh-CN.md)。Web 构建需要 Node >=22.12、pnpm 10.34.5；使用 ./scripts/test-web.sh 独立测试。首次 Web 安装和日常更新均使用 ./scripts/deploy.sh；首次安装加 --install-web --public-url https://实际域名，已有外部访问保护时加 --auth-mode external。
 
 - [管理后端接口](docs/MANAGER_API.zh-CN.md)：供 TUI／网关使用的 /v1 与 Web 生命周期。
 - [浏览器 API](docs/WEB_API.zh-CN.md)：登录、业务映射、CSRF、错误、日志、只读摘要。

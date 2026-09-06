@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """从当前工作区构建并更新现有服务；不备份、不自动回滚。"""
 import argparse
+import getpass
+import json
+import pwd
+import secrets
 import os
 from pathlib import Path
 import shutil
@@ -15,6 +19,8 @@ TARGET = Path('/usr/local/bin/mihomo-tui')
 WEB_RUNTIME = Path('/opt/mihomo-web/runtime')
 WEB_CURRENT = Path('/opt/mihomo-web/current')
 WEB_UNIT = Path('/etc/systemd/system/mihomo-web.service')
+CONFIG = Path('/etc/mihomo-web/config.json')
+STATE = Path('/var/lib/mihomo-web')
 
 
 def run(*command, capture=False):
@@ -65,6 +71,47 @@ def install_web_files(build):
     return changed
 
 
+def password_hash(binary, mode):
+    if mode == 'external':
+        return ''
+    password = getpass.getpass('设置 Web 管理员密码（12—1024 字节）：')
+    if not 12 <= len(password.encode('utf-8')) <= 1024:
+        raise ValueError('密码必须为 12—1024 字节')
+    if password != getpass.getpass('再次输入密码：'):
+        raise ValueError('两次密码不同')
+    return subprocess.run([str(binary), '--hash-password'], input=password + '\n',
+                          text=True, stdout=subprocess.PIPE, check=True, timeout=30).stdout.strip()
+
+
+def initialize_web(build, public_url, auth_mode):
+    if CONFIG.exists() or service_value(WEB, 'LoadState') != 'not-found':
+        raise ValueError('Web 已安装；日常更新不需要 --install-web')
+    cfg = {'listen': '127.0.0.1:9080', 'public_url': public_url.rstrip('/'),
+           'manager_socket': '/run/mihomo-tui/daemon.sock', 'auth_mode': auth_mode,
+           'password_hash': password_hash(build / 'mihomo-web', auth_mode),
+           'summary_token': secrets.token_hex(32), 'show_node': False, 'test_mode': False}
+    with tempfile.TemporaryDirectory(prefix='mihomo-web-install-') as temp:
+        candidate = Path(temp) / 'config.json'
+        candidate.write_text(json.dumps(cfg))
+        run(str(build / 'mihomo-web'), '--config', str(candidate), '--static', str(build / 'static'), '--check')
+    try:
+        account = pwd.getpwnam('mihomo-web')
+    except KeyError:
+        run('useradd', '--system', '--user-group', '--home-dir', str(STATE),
+            '--shell', '/usr/sbin/nologin', 'mihomo-web')
+        account = pwd.getpwnam('mihomo-web')
+    run('usermod', '-aG', 'mihomo-tui,mihomo-tui-operator', 'mihomo-web')
+    CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    os.chown(CONFIG.parent, 0, account.pw_gid)
+    CONFIG.parent.chmod(0o750)
+    CONFIG.write_text(json.dumps(cfg, indent=2))
+    os.chown(CONFIG, 0, account.pw_gid)
+    CONFIG.chmod(0o640)
+    STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chown(STATE, account.pw_uid, account.pw_gid)
+    STATE.chmod(0o700)
+
+
 def check_started(unit):
     if service_value(unit, 'ActiveState') != 'active':
         raise RuntimeError(unit + ' 未启动成功')
@@ -79,7 +126,10 @@ def report_failure(exc):
         pass
 
 
-def install_built(build, with_web):
+def install_built(build, with_web, public_url=None, auth_mode='password'):
+    if public_url:
+        initialize_web(build, public_url, auth_mode)
+        with_web = True
     web_running = with_web and service_value(WEB, 'ActiveState') == 'active'
     print('构建已完成，开始替换程序。', flush=True)
     if web_running:
@@ -91,6 +141,8 @@ def install_built(build, with_web):
             run('systemctl', 'daemon-reload')
         else:
             print('Web 服务文件未变化，跳过重载。', flush=True)
+    if public_url:
+        run('systemctl', '--no-reload', 'disable', WEB)
     print('重启管理器……', flush=True)
     run('systemctl', 'restart', MANAGER)
     check_started(MANAGER)
@@ -103,12 +155,15 @@ def install_built(build, with_web):
     print('更新完成。', flush=True)
 
 
-def deploy(build_only=False):
+def deploy(build_only=False, public_url=None, auth_mode='password'):
     if os.geteuid() == 0:
         raise RuntimeError('请直接运行 ./scripts/deploy.sh，不要在前面加 sudo；构建完成后会申请权限')
     if service_value(MANAGER, 'LoadState') != 'loaded':
         raise RuntimeError('请先按 README 安装管理器服务')
-    with_web = service_value(WEB, 'LoadState') == 'loaded'
+    web_installed = service_value(WEB, 'LoadState') == 'loaded'
+    if public_url and web_installed:
+        raise RuntimeError('Web 已安装；直接运行 ./scripts/deploy.sh 更新')
+    with_web = web_installed or bool(public_url)
     command = [str(ROOT / 'scripts/build-current.sh')]
     if with_web:
         command.append('--web')
@@ -122,26 +177,35 @@ def deploy(build_only=False):
                '--install-built', str(build.resolve())]
     if with_web:
         command.append('--web')
+    if public_url:
+        command.extend(['--install-web', '--public-url', public_url, '--auth-mode', auth_mode])
     subprocess.run(command, check=True)
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(prog='./scripts/deploy.sh', description=__doc__)
     parser.add_argument('--build-only', action='store_true', help='只构建当前代码，不替换或重启服务')
+    parser.add_argument('--install-web', action='store_true', help='同时首次安装可选 Web，默认保持关闭')
+    parser.add_argument('--public-url', help='首次 Web 安装的 HTTPS 公开地址')
+    parser.add_argument('--auth-mode', choices=['password', 'external'], help='首次 Web 安装认证方式，默认 password')
     parser.add_argument('--install-built', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--web', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.install_web != bool(args.public_url):
+        parser.error('--install-web 与 --public-url 必须一起使用')
+    if args.auth_mode and not args.install_web:
+        parser.error('--auth-mode 只用于首次安装；日常更新保留现有认证配置')
     if args.install_built:
         if os.geteuid() != 0:
             parser.error('内部安装步骤需要 sudo')
         try:
-            install_built(args.install_built, args.web)
+            install_built(args.install_built, args.web, args.public_url, args.auth_mode or 'password')
         except (Exception, KeyboardInterrupt) as exc:
             report_failure(exc)
             return 1
     else:
         try:
-            deploy(args.build_only)
+            deploy(args.build_only, args.public_url, args.auth_mode or 'password')
         except (Exception, KeyboardInterrupt) as exc:
             print('操作未完成：' + str(exc), file=sys.stderr)
             return 1

@@ -55,17 +55,16 @@ ssh -N -L 19080:127.0.0.1:19080 server-pc
 
 ## 正式安装（默认关闭）
 
-先按 README 安装管理器／TUI。Web 首次安装单独处理；已经安装后只使用 ./scripts/deploy.sh 更新。
+先按 README 安装管理器／TUI。Web 首次安装与日常更新共用 ./scripts/deploy.sh，不再有独立的 Web 部署脚本。首次安装也会更新当前管理器代码。
 
 准备实际 HTTPS 域名或私有 HTTPS 入口，将其转发到服务器 127.0.0.1:9080。转发保留公开 Host；日志路径禁用缓冲、允许 SSE 心跳，不使用整体短请求时限。第一版采用独立站点根路径，不支持挂在 /mihomo/ 等子路径。浏览器公开地址与 Homepage 内部 API 地址分开配置。
 
 ```bash
-./scripts/build-web.sh
-# 将域名替换为你已配置的实际 HTTPS 地址。
-sudo python3 scripts/deploy-web.py --install --public-url https://mihomo.example.invalid
+# 用普通用户执行，构建完成后才申请 sudo。
+./scripts/deploy.sh --install-web --public-url https://mihomo.example.invalid
 ```
 
-默认 password 模式交互设置管理员密码；external 模式不询问、不生成 Web 密码。两种模式都自动生成独立摘要令牌，只写服务器私有配置。安装后 Web 保持关闭、不设自启。已有 Web 服务或私有配置时拒绝重复初装；安装失败直接报告，不自动恢复。
+默认 password 模式交互设置管理员密码；external 模式不询问、不生成 Web 密码。两种模式都自动生成独立摘要令牌，只写服务器私有配置。安装后 Web 保持关闭、不设自启。已有 Web 服务或私有配置时拒绝重复初装；安装失败直接报告，不自动恢复。日常更新不加首次安装参数，现有免密码配置会保留。
 
 在 TUI 首页选择“开启 Web”，或：
 
@@ -82,8 +81,7 @@ mihomo-tui web stop
 已使用 Cloudflare Zero Trust / Access 保护该站点时，首次安装显式选择 external：
 
 ```bash
-./scripts/build-web.sh
-sudo python3 scripts/deploy-web.py --install \
+./scripts/deploy.sh --install-web \
   --public-url https://mihomo.example.invalid --auth-mode external
 ```
 

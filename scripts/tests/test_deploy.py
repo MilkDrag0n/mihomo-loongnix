@@ -127,5 +127,47 @@ class FilesTests(unittest.TestCase):
             self.assertEqual(config.read_text(), 'private')
 
 
+class FirstWebInstallTests(unittest.TestCase):
+    def test_first_install_builds_web_and_forwards_options_after_build(self):
+        with patch.object(deploy.os, 'geteuid', return_value=1000), \
+             patch.object(deploy, 'service_value', side_effect=['loaded', 'not-found']), \
+             patch.object(deploy.subprocess, 'run') as run:
+            deploy.deploy(public_url='https://example.invalid', auth_mode='external')
+        commands = [c.args[0] for c in run.call_args_list]
+        self.assertEqual(commands[0][-1], '--web')
+        self.assertEqual(commands[1][0], 'sudo')
+        self.assertEqual(commands[1][-5:], ['--install-web', '--public-url', 'https://example.invalid', '--auth-mode', 'external'])
+
+    def test_existing_web_rejects_first_install_before_build(self):
+        with patch.object(deploy.os, 'geteuid', return_value=1000), \
+             patch.object(deploy, 'service_value', side_effect=['loaded', 'loaded']), \
+             patch.object(deploy.subprocess, 'run') as run:
+            with self.assertRaises(RuntimeError):
+                deploy.deploy(public_url='https://example.invalid')
+        run.assert_not_called()
+
+    def test_first_install_stays_closed_and_reloads_once(self):
+        with patch.object(deploy, 'initialize_web') as initialize, \
+             patch.object(deploy, 'service_value', return_value='inactive'), \
+             patch.object(deploy, 'replace_binary'), \
+             patch.object(deploy, 'install_web_files', return_value=True), \
+             patch.object(deploy, 'check_started'), patch.object(deploy, 'run') as run:
+            deploy.install_built(Path('/fake'), True, 'https://example.invalid', 'external')
+        initialize.assert_called_once_with(Path('/fake'), 'https://example.invalid', 'external')
+        commands = [c.args for c in run.call_args_list]
+        self.assertEqual(commands.count(('systemctl', 'daemon-reload')), 1)
+        self.assertIn(('systemctl', '--no-reload', 'disable', deploy.WEB), commands)
+        self.assertNotIn(('systemctl', 'start', deploy.WEB), commands)
+        self.assertNotIn(('systemctl', 'stop', 'mihomo.service'), commands)
+
+    def test_first_install_build_only_never_prompts_or_installs(self):
+        with patch.object(deploy.os, 'geteuid', return_value=1000), \
+             patch.object(deploy, 'service_value', side_effect=['loaded', 'not-found']), \
+             patch.object(deploy.subprocess, 'run') as run:
+            deploy.deploy(build_only=True, public_url='https://example.invalid', auth_mode='external')
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0][-1], '--web')
+
+
 if __name__ == '__main__':
     unittest.main()

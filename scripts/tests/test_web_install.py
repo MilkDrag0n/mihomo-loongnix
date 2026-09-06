@@ -1,16 +1,13 @@
 """首次 Web 安装的密码分支；不安装服务。"""
 import importlib.util
 from pathlib import Path
-import sys
 import unittest
 from unittest.mock import patch
 
 scripts = Path(__file__).parents[1]
-sys.path.insert(0, str(scripts))
-spec = importlib.util.spec_from_file_location('install_web', scripts / 'deploy-web.py')
+spec = importlib.util.spec_from_file_location('install_web', scripts / 'deploy.py')
 web = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(web)
-sys.path.remove(str(scripts))
 
 
 class PasswordTests(unittest.TestCase):

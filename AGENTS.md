@@ -19,7 +19,7 @@
 - 重启管理器；Web 原来运行就重启，原来关闭就保持关闭。日常脚本不更新或启停 Mihomo 内核，不覆盖订阅、运行数据、Web 域名或认证配置，不改变服务自启设置。
 - Web unit 内容变化时才执行 daemon-reload。不要为每次更新无条件重载系统服务。
 - 普通代码、文档修改不等于正式部署授权；未获授权时使用独立测试和 --build-only。
-- 首次安装另见 README 和 docs/WEB_INTEGRATION.zh-CN.md；scripts/deploy-web.py 只负责首次可选 Web 安装。
+- 部署唯一用户入口为 ./scripts/deploy.sh。可选 Web 首次安装使用该入口的 --install-web、--public-url 和 --auth-mode 参数；不再创建或保留独立 Web 安装／部署脚本。管理器首次安装另见 README。
 - 不自动删除历史备份、旧按提交构建或 /opt/mihomo-web/releases/；它们不再参与日常部署。源码中不保留另一套旧部署流程。
 
 ## 固定目录

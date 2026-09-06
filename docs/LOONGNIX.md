@@ -108,7 +108,7 @@ cd "$HOME/projects/mihomo-loongnix"
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -v
 ~~~
 
-scripts/build-release.sh 和 scripts/build-web.sh 保留为固定目录构建的便捷入口，不再归档版本。可用 XDG_DATA_HOME 指定当前构建所在用户数据目录；首次 Web 安装使用默认 ~/.local/share 路径。
+scripts/build-release.sh 和 scripts/build-web.sh 保留为固定目录构建的便捷入口，不再归档版本。可用 XDG_DATA_HOME 指定当前构建所在用户数据目录；首次 Web 安装也会沿用该构建目录。
 
 服务异常时可查看：
 
@@ -117,7 +117,7 @@ systemctl status mihomo-manager.service mihomo-web.service --no-pager
 journalctl -u mihomo-manager.service -u mihomo-web.service -n 40 --no-pager
 ~~~
 
-首次安装管理器按 README；首次可选 Web 安装按网页接入指南。部署脚本不为首次安装自动创建账号、配置、服务。
+首次安装管理器按 README；可选 Web 首次安装也使用 ./scripts/deploy.sh，加 --install-web --public-url https://实际域名，可用 --auth-mode external 选择已有外部访问保护。此时统一入口会创建 Web 账号、配置和服务，并保持 Web 关闭。日常更新无需这些参数。
 
 ## 私密数据
 
