@@ -44,11 +44,13 @@ func New(c webconfig.Config, static string) (*Server, error) {
 		return nil, e
 	}
 	tr := &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		var d net.Dialer
+		d := net.Dialer{Timeout: 5 * time.Second}
 		return d.DialContext(ctx, "unix", c.ManagerSocket)
 	}, ResponseHeaderTimeout: 120 * time.Second, MaxIdleConns: 8, IdleConnTimeout: 30 * time.Second}
 	st := tr.Clone()
-	st.ResponseHeaderTimeout = 5 * time.Second
+	// Mihomo HTTP logs may not send headers until the first matching event.
+	// The downstream SSE connection supplies heartbeats while this request waits.
+	st.ResponseHeaderTimeout = 0
 	return &Server{Config: c, Static: static, client: &http.Client{Transport: tr, CheckRedirect: noRedirect}, stream: &http.Client{Transport: st, CheckRedirect: noRedirect}, sessions: map[string]*session{}, passwordBusy: make(chan struct{}, 1), writeBusy: make(chan struct{}, 1), delayBusy: make(chan struct{}, 1), closed: make(chan struct{})}, nil
 }
 func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

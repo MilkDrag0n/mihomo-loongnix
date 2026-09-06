@@ -276,9 +276,7 @@ func TestQuietStreamSurvivesMinute(t *testing.T) {
 		t.Skip("显式运行一分钟静默流验收")
 	}
 	app := setup(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(200)
-		w.(http.Flusher).Flush()
+		// A quiet Mihomo HTTP stream may not send any response headers.
 		<-r.Context().Done()
 	})
 	req(app, "GET", "/api/v1/auth/session", "", true)

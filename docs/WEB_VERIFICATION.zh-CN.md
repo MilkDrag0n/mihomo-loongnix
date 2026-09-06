@@ -3,7 +3,7 @@
 日期：2026-09-06；环境：server-pc，Loongnix 25 / loongarch64，Go 1.26.1，Node 24.20.0。此记录针对源代码与独立假数据环境，不代表正式 Web 已安装。
 
 - Go 全包测试、go vet 通过；TUI 模拟终端覆盖 80×24，新增 Web 控件未遮挡当前配置。
-- Web 前端类型检查、3 个组件交互测试和正式模式静态构建通过。组件验证规则分页／筛选、导入链接清理和特殊代理组名称。
+- Web 前端类型检查、4 个组件交互测试和正式模式静态构建通过。组件验证规则分页／筛选、导入链接清理、特殊代理组名称，以及日志重连退避／退出清理。
 - Go 网关验证 Cookie 登录／注销／空闲过期、生产 Secure Cookie 标志、CSRF／Host、摘要令牌范围、字段／大小校验、路径白名单、写入互斥、状态分类、日志分块与注销关闭上游。
 - 单独运行 66 秒静默流测试，收到至少 4 次心跳；普通测试默认跳过这一较长验收。
 - Python 全部 26 项测试通过，其中 Web 部署包完整性、篡改、路径穿越、符号链接、自定义 unit、架构与来源、保持关闭回退共 7 项。
@@ -14,5 +14,11 @@
 - 全程未重启正式 mihomo-manager.service／mihomo.service；只读检查两者 active。
 
 可复跑：`./scripts/test-web.sh`、`go test -count=1 ./...`、`go vet ./...`、`MIHOMO_WEB_LONG_STREAM_TEST=1 go test -count=1 ./internal/webgateway -run TestQuietStreamSurvivesMinute -v`。
+
+补充上线前验证（同日）：
+
+- 复现了真实 HTTP 管理器转发在安静日志时不发送响应头的问题，修复后即时建立连接，并验证关闭连接会取消上游订阅。
+- 网关增加首条日志延迟 6 秒和等待响应头期间注销的回归测试；一分钟静默测试也改为上游不发送响应头，确认仍有至少 4 次心跳。
+- 使用独立 HTTPS 测试入口 → HTTP 反向代理 → Web → 假 Unix 管理器，验证正式模式 Secure Cookie、有效证书校验、CSRF 写入、注销及 Cookie 不发送到 HTTP；未修改系统证书信任。
 
 尚未完成真实环境验收：sudo 正式安装／升级／回退、普通 Web 服务账号权限、实际 HTTPS 反向代理与 Cookie、Homepage 真实 widget、原生 systemd 启停与异常恢复。这些检查需要按部署说明在具体入口和安装版本上执行；不能用单元测试或 --check 代替。

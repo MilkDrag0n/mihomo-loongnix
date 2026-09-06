@@ -613,7 +613,12 @@ func (d *Daemon) handleManagerLogStream(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
+	// Send the successful subscription before waiting for the first log line.
+	// Do not add another buffered hop after the core accepts the stream.
+	controller := http.NewResponseController(w)
+	if err := controller.Flush(); err != nil {
+		return
+	}
 	buffer := make([]byte, 32*1024)
 	for {
 		n, readErr := resp.Body.Read(buffer)
@@ -621,8 +626,8 @@ func (d *Daemon) handleManagerLogStream(w http.ResponseWriter, r *http.Request) 
 			if _, err := w.Write(buffer[:n]); err != nil {
 				return
 			}
-			if flusher != nil {
-				flusher.Flush()
+			if err := controller.Flush(); err != nil {
+				return
 			}
 		}
 		if readErr != nil {

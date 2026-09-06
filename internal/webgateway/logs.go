@@ -57,16 +57,6 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request, id string, v *sess
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "GET", "http://manager/v1/logs/stream?level="+url.QueryEscape(level), nil)
-	res, e := s.stream.Do(req)
-	if e != nil {
-		failure(w, 502, "UPSTREAM_UNAVAILABLE", "日志暂时不可用")
-		return
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		failure(w, 502, "UPSTREAM_UNAVAILABLE", "日志暂时不可用")
-		return
-	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(200)
@@ -77,6 +67,16 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request, id string, v *sess
 	items := make(chan streamItem, 8)
 	go func() {
 		defer close(items)
+		// Open the upstream inside the reader so a quiet core cannot delay the
+		// browser handshake, heartbeats, logout or cancellation.
+		res, err := s.stream.Do(req)
+		if err != nil {
+			return
+		}
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			return
+		}
 		reader := bufio.NewReaderSize(res.Body, 64<<10)
 		discard := false
 		send := func(x streamItem) bool {

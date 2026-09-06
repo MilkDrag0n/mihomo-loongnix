@@ -278,6 +278,8 @@ curl --unix-socket /run/mihomo-tui/daemon.sock http://localhost/v1/status
 {"type":"info","payload":"示例日志"}
 ```
 
+管理器取得内核成功响应后会立即刷新响应头，不再额外等待正文；内核自己的 HTTP 日志接口仍可能直到第一条匹配日志才响应。网页网关应独立建立下游 SSE 并保持心跳，不能把这一等待等同于代理故障。
+
 部分上游版本使用带 `data:` 前缀的 SSE。不能仅凭响应头就让浏览器 `EventSource` 直接消费，网页后端应兼容解析后再输出自己的标准流格式。
 
 ```bash

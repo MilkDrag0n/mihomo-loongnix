@@ -78,6 +78,22 @@ mihomo-tui web stop
 
 这控制网页服务，不是打开电脑上的浏览器。退出 TUI 后 Web 可继续运行；服务器重启后默认不自启。未安装时首页提示“Web 未安装”，不会自动安装；Web 故障不阻止其他五页功能。
 
+## 复用 Cloudflare Tunnel
+
+现有隧道由 Cloudflare 管理时，在隧道的公开应用路由中新增一条，保留其他应用的路由。主机网络模式下的 cloudflared 可连接本机 Web 监听地址：
+
+| 路由字段 | 本项目设置 |
+| --- | --- |
+| 公开主机名 | 用户实际指定的专用域名，不带路径 |
+| 源站服务 | HTTP，127.0.0.1:9080 |
+| HTTP Host Header | 与 public_url 中的公开主机名一致；如有非默认公开端口，也带上端口 |
+| 路径 | 留空，使用站点根路径 |
+| 禁用分块编码 | 保持关闭，允许流式日志 |
+
+public_url 仍为浏览器访问的 HTTPS 地址；本机源站使用 HTTP，不给 Web 额外配置自签名 HTTPS。网页默认关闭时，入口暂时不可用是预期行为。只发布正式安装后的 9080 服务，不把假数据预览端口 19080 配成公开路由。字段定义见 [Cloudflare 源站参数](https://developers.cloudflare.com/tunnel/advanced/origin-parameters/) 和 [公开应用路由](https://developers.cloudflare.com/tunnel/routing/)。
+
+首次安装后依次验证：本机 Web 健康、公开地址登录、概览读取真实状态、日志保持一分钟、TUI 关闭／开启 Web；关闭网页期间单独确认代理仍正常。若入口已有 Cloudflare Access 策略，保留该策略，实际浏览器登录和 Homepage 服务端访问分别验收。
+
 ## 配置字段
 
 JSON 拒绝未知字段；模板不含真实凭据。初始安装器生成全部必需字段，不直接照抄无效示例值：

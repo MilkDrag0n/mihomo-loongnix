@@ -31,32 +31,41 @@ function connect() {
   clearTimeout(timer);
   if (!alive || document.hidden) return;
   connection.value = "正在连接";
-  stream = new EventSource("/api/v1/logs/stream?level=" + level.value);
-  stream.onopen = () => {
-    connection.value = "实时连接";
-    backoff = 1000;
+  const source = new EventSource("/api/v1/logs/stream?level=" + level.value);
+  stream = source;
+  let openedAt = 0;
+  source.onopen = () => {
+    if (stream !== source || !alive) return;
+    connection.value = "等待日志";
+    openedAt = Date.now();
   };
-  stream.addEventListener("log", (e) => {
+  source.addEventListener("log", (e) => {
+    if (stream !== source || !alive) return;
     try {
+      connection.value = "实时连接";
+      backoff = 1000;
       add(JSON.parse((e as MessageEvent).data));
     } catch {}
   });
-  stream.addEventListener("gap", () =>
+  source.addEventListener("gap", () => {
+    if (stream !== source || !alive) return;
     add({
       level: "提示",
       message: "日志连接有间断，可能遗漏部分记录。",
       received_at: new Date().toISOString(),
-    }),
-  );
-  stream.onerror = async () => {
-    stream?.close();
+    });
+  });
+  source.onerror = async () => {
+    if (stream !== source || !alive) return;
+    source.close();
+    if (openedAt && Date.now() - openedAt >= 30000) backoff = 1000;
     connection.value = "连接已断开";
     try {
       await session();
     } catch {
       return;
     }
-    if (alive) {
+    if (alive && stream === source && !document.hidden) {
       timer = setTimeout(connect, backoff);
       backoff = Math.min(30000, backoff * 2);
     }
@@ -65,6 +74,7 @@ function connect() {
 function visibility() {
   if (document.hidden) {
     stream?.close();
+    stream = undefined;
     clearTimeout(timer);
     connection.value = "后台已暂停";
   } else {

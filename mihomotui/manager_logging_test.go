@@ -95,3 +95,41 @@ func TestManagedLogRecorderToggleSizeAndRotation(t *testing.T) {
 		t.Fatalf("disabled status changed: before=%d after=%+v", before, after)
 	}
 }
+
+// Exercise a real HTTP connection: a recorder does not reveal buffered headers.
+func TestManagerQuietLogStreamFlushesHeadersAndCancels(t *testing.T) {
+	useTestConfigDir(t)
+	disconnected := make(chan struct{})
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/logs" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(disconnected)
+	}))
+	defer core.Close()
+	cfg := *GlobalConfig()
+	cfg.Mihomo.ExternalController = strings.TrimPrefix(core.URL, "http://")
+	SetGlobalConfig(cfg)
+	manager := httptest.NewServer((&Daemon{}).router())
+	defer manager.Close()
+	client := &http.Client{Timeout: 2 * time.Second}
+	response, err := client.Get(manager.URL + "/v1/logs/stream?level=info")
+	if err != nil {
+		t.Fatalf("quiet stream did not send response headers: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		t.Fatalf("quiet stream status = %d", response.StatusCode)
+	}
+	response.Body.Close()
+	select {
+	case <-disconnected:
+	case <-time.After(time.Second):
+		t.Fatal("closing the viewer did not cancel the quiet core subscription")
+	}
+}
