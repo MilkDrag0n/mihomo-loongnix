@@ -5,7 +5,15 @@ export interface Profile {
   updated_at?: string;
   active: boolean;
 }
+export interface Metrics {
+  observed_at: string;
+  download_total: number | null;
+  upload_total: number | null;
+  memory_bytes: number | null;
+  connections: number | null;
+}
 export interface Status {
+  metrics?: Metrics;
   core: {
     running: boolean;
     service_active: boolean;

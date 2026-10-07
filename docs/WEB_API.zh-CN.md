@@ -131,3 +131,9 @@ curl -sS http://127.0.0.1:19080/healthz
 ```
 
 登录、CSRF、业务请求、特殊名称、摘要令牌隔离、超时和流关闭的可执行用例见 `internal/webgateway/server_test.go`。正式密码、Cookie 和令牌不应放入命令行历史；网页登录优先通过浏览器。
+
+## 状态聚合统计（NapCat 风格控制台）
+
+既有 status 响应新增可选 `metrics`：`observed_at`（UTC RFC3339Nano）、`download_total`/`upload_total`（内核本次运行累计字节）、`memory_bytes`（/memory 实际观测字节）、`connections`（连接数量）。不可观测字段为 null，整体不可用时省略 metrics；零与未知不同。计数重置后前端重新建立基线，按相邻 observed_at 差值计算每秒速率，不用固定轮询周期假定速率。
+
+管理器仅以既有控制器权限只读采集，新增采集共享 700 ms 时限，并限制响应体。网关仍走原类型白名单，不返回控制器凭据、连接目标、进程元数据或完整连接列表，不增加浏览器管理权限。

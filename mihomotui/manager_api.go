@@ -35,6 +35,7 @@ type TUNRuntimeStatus struct {
 }
 
 type ManagerStatus struct {
+	Metrics       *RuntimeMetrics   `json:"metrics,omitempty"`
 	ObservedAt    string            `json:"observed_at"`
 	Core          CoreRuntimeStatus `json:"core"`
 	TUN           TUNRuntimeStatus  `json:"tun"`
@@ -109,6 +110,7 @@ func (d *Daemon) managerStatus() (ManagerStatus, error) {
 			status.TUN.RuntimeEnabled, status.ProxyPort, configOK = runtimeConfigState(api, status.ProxyPort)
 			status.TUN.ObservationOK = configOK && interfaceErr == nil
 			status.CurrentNode = runtimeCurrentNode(api, status.CurrentGroup)
+			status.Metrics = runtimeMetrics(api)
 		} else if status.Core.Detail == "" {
 			status.Core.Detail = RedactURLInText(err.Error())
 		}
