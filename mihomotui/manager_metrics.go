@@ -19,7 +19,7 @@ type RuntimeMetrics struct {
 }
 
 func runtimeMetrics(api *MihomoAPI) *RuntimeMetrics {
-	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
 	defer cancel()
 	req, err := api.buildRequest(http.MethodGet, "/connections", nil, nil)
 	if err != nil {
@@ -66,7 +66,10 @@ func runtimeMetrics(api *MihomoAPI) *RuntimeMetrics {
 			var memory struct {
 				Inuse *int64 `json:"inuse"`
 			}
-			if res.StatusCode == http.StatusOK && json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&memory) == nil && memory.Inuse != nil && *memory.Inuse >= 0 {
+			// Mihomo deliberately emits a zero placeholder in the first /memory frame.
+			// Read the second frame within the bounded request, never report the placeholder.
+			decoder := json.NewDecoder(io.LimitReader(res.Body, 4096))
+			if res.StatusCode == http.StatusOK && decoder.Decode(&memory) == nil && decoder.Decode(&memory) == nil && memory.Inuse != nil && *memory.Inuse >= 0 {
 				metric.MemoryBytes = memory.Inuse
 			}
 		}

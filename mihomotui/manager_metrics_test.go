@@ -11,7 +11,7 @@ import (
 func TestRuntimeMetricsOnlyReturnsAggregateCounters(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/memory" {
-			w.Write([]byte(`{"inuse":8000000}`))
+			w.Write([]byte("{\"inuse\":0}\n{\"inuse\":8000000}\n"))
 			return
 		}
 		if r.Method != "GET" || r.URL.Path != "/connections" {
@@ -45,5 +45,20 @@ func TestRuntimeMetricsMissingInvalidAndZeroAreDistinct(t *testing.T) {
 				t.Fatal("missing total changed to zero")
 			}
 		})
+	}
+}
+
+func TestRuntimeMetricsDoesNotReportMemoryPlaceholder(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/memory" {
+			w.Write([]byte(`{"inuse":0}`))
+			return
+		}
+		w.Write([]byte(`{"downloadTotal":1,"uploadTotal":1,"connections":[]}`))
+	}))
+	defer server.Close()
+	m := runtimeMetrics(NewMihomoAPI(server.URL, ""))
+	if m == nil || m.MemoryBytes != nil {
+		t.Fatal("memory placeholder must remain unknown")
 	}
 }
