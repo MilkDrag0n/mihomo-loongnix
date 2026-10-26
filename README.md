@@ -1,5 +1,8 @@
 # mihomo-loongnix
 
+
+当前网页已迁至 React + TypeScript + HeroUI + Tailwind 4，共用 `/home/server/services/ui-kit` 的 `@holosama/ui`；构建与回归以 [web/README.md](web/README.md) 和 npm 的 package-lock 为准。旧 Vue/daisyUI/pnpm 操作仅对应历史前端。LoongArch 缺少原生前端构建依赖时，可在开发机生成 dist 并通过 `MIHOMO_WEB_PREBUILT=/path/to/dist ./scripts/build-current.sh --web` 准备候选；生产仍按 `/home/server/services/mihomo/README.md` 的 Compose 部署，不能启用旧 systemd。
+
 面向 Loongnix / LoongArch ABI2 的 Mihomo 管理工具，通过终端界面或可选独立网页管理代理内核、订阅配置、节点、规则和日志。
 
 ![Mihomo 终端控制台首页](docs/images/tui-home.png)
@@ -212,3 +215,11 @@ sudo journalctl -u mihomo.service -n 50 --no-pager
 界面沿用终端默认背景与正文颜色，使用顶部五页导航、状态分区和底部快捷键提示。建议终端至少为 80 列 × 24 行；焦点以边框、下划线或局部反色显示，不要求专用字体。
 
 更多资料：[部署与回滚](docs/LOONGNIX.md) · [管理接口](docs/MANAGER_API.zh-CN.md) · [界面控件说明](docs/UI_CONTROL_TREE.zh-CN.md) · [测试参考](docs/TEST_REFERENCE.zh-CN.md)
+
+## 2026-10-06 Docker 迁移后的运行方式
+
+本机现用 `/home/server/services/mihomo`，源码在其 `source/`；此前宿主机目录和 systemd 部署说明为历史方式。通过上一级 compose.yaml 管理 mihomo、mihomo-manager、mihomo-web，勿重新启动旧宿主机服务。现有 scripts/deploy.sh 的正式安装路径仍属于旧方式，本次迁移后不使用它替换正式部署；构建可使用 --build-only，再按当前 Compose 的 bin/static 布局验证候选构建。没有启用本项目自动部署更新。
+
+管理器使用 MIHOMO_TUI_SOCKET=/run/mihomo-tui/daemon.sock，manager/web 映射同一 data/run；不假定基础镜像的 /var/run 是 /run 链接。bin/systemctl 只将 mihomo.service 与 mihomo-web.service 的固定操作转给 Docker。程序均为容器 PID 1，状态适配按容器命名空间报告。
+
+TUN 当前关闭，容器不授予 /dev/net/tun、NET_ADMIN；如未来要启用 TUN，需要单独验证宿主路由和最小权限。HTTP/SOCKS 7890、Web 概览与控制接口已实际验证。
