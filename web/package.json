@@ -1,39 +1,42 @@
 {
   "name": "mihomo-web",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "packageManager": "pnpm@10.34.5",
   "engines": {
     "node": ">=22.12.0"
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 15173",
-    "build": "vue-tsc --noEmit && vite build",
-    "check": "vue-tsc --noEmit",
-    "test": "vitest run"
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:ui": "playwright test"
   },
   "dependencies": {
-    "vue": "3.5.42",
-    "vue-router": "4.6.4"
+    "@holosama/ui": "file:vendor/holosama-ui-0.2.2.tgz",
+    "@heroui/react": "2.8.10",
+    "framer-motion": "12.23.24",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-router-dom": "7.18.3",
+    "lucide-react": "1.41.0",
+    "@heroui/theme": "2.4.26",
+    "tailwind-merge": "3.3.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "5.2.4",
-    "@vue/test-utils": "2.4.6",
-    "autoprefixer": "10.4.22",
-    "daisyui": "4.12.24",
-    "jsdom": "26.1.0",
-    "postcss": "8.5.6",
-    "prettier": "3.6.2",
-    "tailwindcss": "3.4.19",
+    "@vitejs/plugin-react": "5.1.0",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
     "typescript": "5.9.3",
-    "vite": "6.4.3",
-    "vitest": "3.2.6",
-    "vue-tsc": "3.1.8"
+    "vite": "7.3.6",
+    "vitest": "4.1.11",
+    "tailwindcss": "4.1.14",
+    "@playwright/test": "1.56.1",
+    "@tailwindcss/vite": "4.1.14"
   },
-  "pnpm": {
-    "ignoredBuiltDependencies": [
-      "esbuild"
-    ]
+  "overrides": {
+    "motion-dom": "12.23.23",
+    "motion-utils": "12.23.6"
   }
 }

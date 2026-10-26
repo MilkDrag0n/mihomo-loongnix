@@ -33,14 +33,23 @@ type profile struct {
 	Updated string `json:"updated_at,omitempty"`
 	Active  bool   `json:"active"`
 }
+type runtimeMetrics struct {
+	ObservedAt    string `json:"observed_at"`
+	DownloadTotal *int64 `json:"download_total"`
+	UploadTotal   *int64 `json:"upload_total"`
+	MemoryBytes   *int64 `json:"memory_bytes"`
+	Connections   *int   `json:"connections"`
+}
+
 type managerStatus struct {
-	Core          coreStatus `json:"core"`
-	TUN           tunStatus  `json:"tun"`
-	ActiveProfile *profile   `json:"active_profile,omitempty"`
-	ProxyPort     int        `json:"proxy_port"`
-	CurrentGroup  string     `json:"current_group,omitempty"`
-	CurrentNode   string     `json:"current_node,omitempty"`
-	ObservedAt    string     `json:"observed_at"`
+	Metrics       *runtimeMetrics `json:"metrics,omitempty"`
+	Core          coreStatus      `json:"core"`
+	TUN           tunStatus       `json:"tun"`
+	ActiveProfile *profile        `json:"active_profile,omitempty"`
+	ProxyPort     int             `json:"proxy_port"`
+	CurrentGroup  string          `json:"current_group,omitempty"`
+	CurrentNode   string          `json:"current_node,omitempty"`
+	ObservedAt    string          `json:"observed_at"`
 }
 
 func (s *Server) forward(w http.ResponseWriter, r *http.Request) {

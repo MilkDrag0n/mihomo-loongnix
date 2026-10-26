@@ -11,10 +11,16 @@ mkdir -p "$build_dir"
 echo '构建当前 TUI／管理器代码……'
 CGO_ENABLED=0 GOOS=linux GOARCH=loong64 go build -trimpath -o "$build_dir/mihomo-tui" .
 if [ "${1:-}" = --web ]; then
- . ./scripts/web-toolchain.sh
  echo '构建当前 Web 代码……'
- pnpm --dir web install --frozen-lockfile
- MIHOMO_WEB_DIST="$build_dir/static" pnpm --dir web build
+ if [ -n "${MIHOMO_WEB_PREBUILT:-}" ]; then
+  [ -f "$MIHOMO_WEB_PREBUILT/index.html" ] && [ -d "$MIHOMO_WEB_PREBUILT/assets" ] || { echo '预构建目录缺少 index.html 或 assets。' >&2; exit 1; }
+  mkdir -p "$build_dir/static"
+  cp -R "$MIHOMO_WEB_PREBUILT/." "$build_dir/static/"
+ else
+  . ./scripts/web-toolchain.sh
+  npm ci --prefix web
+  MIHOMO_WEB_DIST="$build_dir/static" npm run build --prefix web
+ fi
  CGO_ENABLED=0 GOOS=linux GOARCH=loong64 go build -trimpath -o "$build_dir/mihomo-web" ./cmd/mihomo-web
  cp deploy/web/mihomo-web.service "$build_dir/mihomo-web.service"
 fi
