@@ -1,0 +1,21 @@
+#!/usr/bin/python3
+"""Translate only Mihomo's fixed service operations to their Docker containers."""
+import json
+import subprocess
+import sys
+
+args = sys.argv[1:]
+units = {'mihomo.service': 'mihomo', 'mihomo-web.service': 'mihomo-web'}
+if len(args) < 2 or args[1] not in units:
+    sys.exit(2)
+verb, name = args[0], units[args[1]]
+if verb in ('start', 'stop', 'restart') and len(args) == 2:
+    sys.exit(subprocess.call(['docker', verb, name]))
+if verb == 'show' and all(arg.startswith('--property=') for arg in args[2:]):
+    state = json.loads(subprocess.check_output(['docker', 'inspect', name]))[0]['State']
+    print('LoadState=loaded')
+    print('ActiveState=' + ('active' if state['Running'] else 'inactive'))
+    # Each executable is PID 1 in its own container; web health reports this PID.
+    print('MainPID=' + ('1' if state['Running'] else '0'))
+    sys.exit(0)
+sys.exit(2)

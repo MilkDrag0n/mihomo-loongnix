@@ -1,0 +1,87 @@
+name: server-mihomo
+services:
+  mihomo:
+    image: server/loongnix-runtime:20261005
+    platform: linux/loong64
+    container_name: mihomo
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TZ: ${MIHOMO_TZ:?set locally}
+    volumes:
+    - /home/server/services/mihomo/bin:/opt/mihomo-bin:ro
+    - /home/server/services/mihomo/data/core:/var/lib/mihomo-tui
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    command:
+    - /opt/mihomo-bin/mihomo
+    - -d
+    - /var/lib/mihomo-tui
+    - -f
+    - /var/lib/mihomo-tui/mihomo/config.yaml
+    tmpfs:
+    - /tmp:rw,nosuid,nodev,mode=1777,size=256m
+  mihomo-manager:
+    image: server/loongnix-runtime:20261005
+    platform: linux/loong64
+    container_name: mihomo-manager
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TZ: ${MIHOMO_MANAGER_TZ:?set locally}
+      PATH: ${MIHOMO_MANAGER_PATH:?set locally}
+      MIHOMO_TUI_CORE_SERVICE: ${MIHOMO_MANAGER_MIHOMO_TUI_CORE_SERVICE:?set locally}
+      MIHOMO_TUI_SOCKET: ${MIHOMO_MANAGER_MIHOMO_TUI_SOCKET:?set locally}
+    volumes:
+    - /home/server/services/mihomo/bin:/opt/mihomo-bin:ro
+    - /home/server/services/mihomo/data/core:/var/lib/mihomo-tui
+    - /home/server/services/mihomo/data/run:/run/mihomo-tui
+    - /var/run/docker.sock:/var/run/docker.sock
+    - /home/server/services/mihomo/bin:/opt/mihomo-web/current:ro
+    - /home/server/services/mihomo/config/web.json:/etc/mihomo-web/config.json:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    command:
+    - /opt/mihomo-bin/mihomo-tui
+    - server
+    - -d
+    - /var/lib/mihomo-tui
+    tmpfs:
+    - /tmp:rw,nosuid,nodev,mode=1777,size=256m
+  mihomo-web:
+    image: server/loongnix-runtime:20261005
+    platform: linux/loong64
+    container_name: mihomo-web
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TZ: ${MIHOMO_WEB_TZ:?set locally}
+    volumes:
+    - /home/server/services/mihomo/bin:/opt/mihomo-bin:ro
+    - /home/server/services/mihomo/config/web.json:/etc/mihomo-web/config.json:ro
+    - /home/server/services/mihomo/data/web:/var/lib/mihomo-web
+    - /home/server/services/mihomo/data/run:/run/mihomo-tui
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    security_opt:
+    - no-new-privileges:true
+    command:
+    - /opt/mihomo-bin/mihomo-web-linux-loong64
+    - --config
+    - /etc/mihomo-web/config.json
+    working_dir: /var/lib/mihomo-web
+    tmpfs:
+    - /tmp:rw,nosuid,nodev,mode=1777,size=256m
