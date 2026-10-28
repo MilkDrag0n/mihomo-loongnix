@@ -15,7 +15,7 @@
 - server-pc 唯一常驻开发仓库：/home/server/projects/mihomo-loongnix，通过 SSH 在服务器本地磁盘开发。共享目录只交换文件，不保存第二份开发仓库。
 - 主仓库：https://github.com/MilkDrag0n/mihomo-loongnix，基于 WangZhongDian/mihomo-tui。origin 指向用户仓库；upstream 只用于读取原作者代码。
 - 开始前检查 git status --short --branch，保留用户修改；不强制重置、清空工作区或强推 main。
-- 较大修改使用短期分支，完成后合并 main；普通小修改可以在 main 提交。
+- 分支、commit、push 与建仓统一遵循 `/home/server/services/AGENTS.md` 的“Git 工作流”：使用短期任务分支，按逻辑改动提交，在阶段成果、交接或结束工作时及时推送，检查和审查通过后合并 main。本文件只补充项目专用检查与既有仓库归属。
 - 程序可能来自未提交工作区，不能只凭目录名、页面数量或内嵌提交号判断实际源码。
 
 ## 日常开发与部署
